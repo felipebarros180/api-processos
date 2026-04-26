@@ -8,7 +8,9 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// === DICIONÁRIO INTEGRAL DE TRIBUNAIS ===
+// =============================================================
+// DICIONÁRIO INTEGRAL DE TRIBUNAIS (Datajud CNJ)
+// =============================================================
 const TRIBUNAIS = {
   // JUSTIÇA ESTADUAL
   "8.01": { sigla: "TJAC", nome: "Tribunal de Justiça do Acre", endpoint: "api_publica_tjac" },
@@ -111,7 +113,9 @@ const TRIBUNAIS = {
   "4.00": { sigla: "CJF", nome: "Conselho da Justiça Federal", endpoint: "api_publica_cjf" }
 };
 
-// === UTILITÁRIOS ===
+// =============================================================
+// UTILITÁRIOS
+// =============================================================
 const limparNum = (n) => String(n || "").replace(/\D/g, "");
 
 const fmtCNJ = (n) => {
@@ -119,7 +123,6 @@ const fmtCNJ = (n) => {
   return `${n.slice(0, 7)}-${n.slice(7, 9)}.${n.slice(9, 13)}.${n.slice(13, 14)}.${n.slice(14, 16)}.${n.slice(16, 20)}`;
 };
 
-// Formata data ISO -> dd/mm/aaaa
 const fmtDataBR = (iso) => {
   if (!iso) return null;
   try {
@@ -129,7 +132,6 @@ const fmtDataBR = (iso) => {
   } catch { return null; }
 };
 
-// Calcula dias entre data ISO e hoje
 const diasDesde = (iso) => {
   if (!iso) return null;
   try {
@@ -140,46 +142,326 @@ const diasDesde = (iso) => {
   } catch { return null; }
 };
 
-// Validação de número CNJ (20 dígitos)
 const validarCNJ = (n) => {
   if (!n || n.length !== 20) return { valido: false, motivo: "Número precisa ter exatamente 20 dígitos." };
   return { valido: true };
 };
 
-// Identifica quem fez o movimento com base no nome/código do movimento
-// Os códigos TPU do CNJ seguem padronização nacional (Tabela Processual Unificada)
-const identificarResponsavel = (mov) => {
-  const nome = (mov?.nome || "").toLowerCase();
-  const complementos = (mov?.complementosTabelados || []).map(c => (c?.descricao || "").toLowerCase()).join(" ");
-  const texto = `${nome} ${complementos}`;
+// =============================================================
+// CLASSIFICADOR DE MOVIMENTAÇÕES (TPU + texto descritivo)
+// Recebe { nome (CNJ TPU), codigo, conteudo (Escavador/JusBrasil), complementos }
+// Retorna { categoria, autor_do_ato, descricao_assertiva, urgencia }
+// =============================================================
+function classificarMovimento({ nome = "", codigo = null, conteudo = "", complementos = [] }) {
+  const compStr = (complementos || []).join(" ");
+  // Junta tudo em minúsculo, dando prioridade ao texto descritivo (conteudo)
+  const txt = `${nome} ${compStr} ${conteudo}`.toLowerCase();
 
-  // Padrões de identificação por palavras-chave do nome do movimento
-  if (/petição inicial|distribuição|distribuído/.test(texto)) return "Cartório / Distribuição";
-  if (/juntada de petição|petição protocolada|peticionamento/.test(texto)) {
-    // Não dá para saber qual parte sem o conteúdo da petição — declarar incerteza
-    return "Parte do processo (advogado peticionante)";
+  // === Decisões judiciais (alta urgência) ===
+  if (/sentença|julgad[oa] procedente|julgad[oa] improcedente|extin[gç]/i.test(txt)) {
+    let resultado = "Sentença proferida";
+    if (/procedente/i.test(txt) && !/improcedente/i.test(txt)) resultado = "Sentença julgou PROCEDENTE o pedido";
+    else if (/improcedente/i.test(txt)) resultado = "Sentença julgou IMPROCEDENTE o pedido";
+    else if (/parcialmente procedente/i.test(txt)) resultado = "Sentença julgou PARCIALMENTE PROCEDENTE";
+    else if (/extin[gç]/i.test(txt)) resultado = "Sentença extinguiu o processo (sem julgamento de mérito)";
+    else if (/homologa/i.test(txt)) resultado = "Sentença homologatória (acordo entre as partes)";
+    return {
+      categoria: "SENTENÇA",
+      autor_do_ato: "Juiz(a)",
+      descricao_assertiva: resultado,
+      urgencia: "ALTA"
+    };
   }
-  if (/juntada de manifestação|manifestação/.test(texto)) return "Parte do processo";
-  if (/juntada de contestação|contestação apresentada/.test(texto)) return "Parte ré";
-  if (/juntada de réplica|réplica/.test(texto)) return "Parte autora";
-  if (/juntada de recurso|recurso interposto|apelação|agravo/.test(texto)) return "Parte do processo (recorrente)";
-  if (/juntada de embargos/.test(texto)) return "Parte embargante";
-  if (/parecer.*ministério público|manifestação.*mp|parecer ministerial/.test(texto)) return "Ministério Público";
-  if (/despacho|decisão interlocutória/.test(texto)) return "Juiz(a)";
-  if (/sentença|julgamento/.test(texto)) return "Juiz(a)";
-  if (/acórdão|decisão colegiada/.test(texto)) return "Tribunal (Desembargadores)";
-  if (/intimação|citação|expedição de mandado|mandado expedido/.test(texto)) return "Cartório / Secretaria";
-  if (/conclusão|conclusos/.test(texto)) return "Cartório (envio ao juiz)";
-  if (/audiência designada|designação de audiência/.test(texto)) return "Juiz(a) / Cartório";
-  if (/realização de audiência|audiência realizada/.test(texto)) return "Juízo (audiência)";
-  if (/perícia|laudo pericial/.test(texto)) return "Perito judicial";
-  if (/arquivamento|arquivado/.test(texto)) return "Cartório (arquivamento)";
-  if (/baixa definitiva|trânsito em julgado/.test(texto)) return "Cartório (baixa)";
 
-  return "Não identificado pelo registro do tribunal";
-};
+  if (/acórdão|acordam.*julgar|provimento.*recurso|negaram provimento|deram provimento/i.test(txt)) {
+    let resultado = "Acórdão proferido pelo Tribunal";
+    if (/deram provimento|provido/i.test(txt) && !/negaram/i.test(txt)) resultado = "Recurso PROVIDO pelo Tribunal";
+    else if (/negaram provimento|não provido|improvido/i.test(txt)) resultado = "Recurso NÃO PROVIDO pelo Tribunal";
+    else if (/parcial provimento/i.test(txt)) resultado = "Recurso PARCIALMENTE PROVIDO";
+    return {
+      categoria: "ACÓRDÃO",
+      autor_do_ato: "Tribunal (órgão colegiado)",
+      descricao_assertiva: resultado,
+      urgencia: "ALTA"
+    };
+  }
 
-// === BUSCA CNJ ===
+  if (/decisão.*liminar|liminar.*deferid|tutela.*urgência|antecipação.*tutela|tutela.*deferid/i.test(txt)) {
+    return {
+      categoria: "DECISÃO LIMINAR / TUTELA",
+      autor_do_ato: "Juiz(a)",
+      descricao_assertiva: /deferid/i.test(txt) ? "Liminar/tutela DEFERIDA" : "Apreciação de pedido liminar",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/decisão|decidi[ru]/i.test(txt) && !/decisão.*colegiada/i.test(txt)) {
+    return {
+      categoria: "DECISÃO INTERLOCUTÓRIA",
+      autor_do_ato: "Juiz(a)",
+      descricao_assertiva: "Decisão interlocutória do juiz no curso do processo",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/despacho/i.test(txt)) {
+    return {
+      categoria: "DESPACHO",
+      autor_do_ato: "Juiz(a)",
+      descricao_assertiva: "Despacho de mero expediente do juiz",
+      urgencia: "BAIXA"
+    };
+  }
+
+  // === Atos das partes ===
+  if (/contestação/i.test(txt)) {
+    return {
+      categoria: "CONTESTAÇÃO",
+      autor_do_ato: "Réu (parte passiva)",
+      descricao_assertiva: "O réu apresentou sua defesa (contestação)",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/réplica/i.test(txt)) {
+    return {
+      categoria: "RÉPLICA",
+      autor_do_ato: "Autor (parte ativa)",
+      descricao_assertiva: "O autor respondeu à contestação (réplica)",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/embargos.*declaração|embargos declaratórios/i.test(txt)) {
+    return {
+      categoria: "EMBARGOS DE DECLARAÇÃO",
+      autor_do_ato: "Parte embargante",
+      descricao_assertiva: "Foram opostos embargos de declaração contra decisão anterior",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/apelação|recurso.*apelação/i.test(txt)) {
+    return {
+      categoria: "APELAÇÃO",
+      autor_do_ato: "Parte recorrente",
+      descricao_assertiva: "Foi interposto recurso de apelação contra a sentença",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/agravo.*instrumento/i.test(txt)) {
+    return {
+      categoria: "AGRAVO DE INSTRUMENTO",
+      autor_do_ato: "Parte agravante",
+      descricao_assertiva: "Foi interposto agravo de instrumento contra decisão interlocutória",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/recurso.*especial|resp/i.test(txt) && /interposto|interposição/i.test(txt)) {
+    return {
+      categoria: "RECURSO ESPECIAL",
+      autor_do_ato: "Parte recorrente",
+      descricao_assertiva: "Recurso Especial dirigido ao STJ",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/recurso.*extraordinário|re\b/i.test(txt) && /interposto|interposição/i.test(txt)) {
+    return {
+      categoria: "RECURSO EXTRAORDINÁRIO",
+      autor_do_ato: "Parte recorrente",
+      descricao_assertiva: "Recurso Extraordinário dirigido ao STF",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/petição.*inicial/i.test(txt)) {
+    return {
+      categoria: "PETIÇÃO INICIAL",
+      autor_do_ato: "Autor",
+      descricao_assertiva: "Apresentação da petição inicial (início do processo)",
+      urgencia: "BAIXA"
+    };
+  }
+
+  if (/juntada.*petição|petição.*protocolada|peticionamento/i.test(txt)) {
+    return {
+      categoria: "PETIÇÃO",
+      autor_do_ato: "Parte (advogado peticionante) — sem identificar qual lado pelo registro",
+      descricao_assertiva: "Foi juntada uma petição aos autos",
+      urgencia: "BAIXA"
+    };
+  }
+
+  if (/manifestação/i.test(txt)) {
+    return {
+      categoria: "MANIFESTAÇÃO",
+      autor_do_ato: "Parte do processo",
+      descricao_assertiva: "Manifestação de uma das partes nos autos",
+      urgencia: "BAIXA"
+    };
+  }
+
+  // === Ministério Público ===
+  if (/ministério público|parecer.*mp|manifestação.*ministerial/i.test(txt)) {
+    return {
+      categoria: "PARECER MP",
+      autor_do_ato: "Ministério Público",
+      descricao_assertiva: "Manifestação/parecer do Ministério Público",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  // === Atos cartorários e secretaria ===
+  if (/distribu[ií]/i.test(txt)) {
+    return {
+      categoria: "DISTRIBUIÇÃO",
+      autor_do_ato: "Cartório / Distribuição",
+      descricao_assertiva: "Processo distribuído ao órgão julgador",
+      urgencia: "BAIXA"
+    };
+  }
+
+  if (/intimação|intimad[oa]/i.test(txt)) {
+    let alvo = "";
+    if (/autor/i.test(txt)) alvo = " (autor)";
+    else if (/réu|requerid[oa]/i.test(txt)) alvo = " (réu)";
+    return {
+      categoria: "INTIMAÇÃO",
+      autor_do_ato: "Cartório / Secretaria",
+      descricao_assertiva: `Parte foi intimada para tomar ciência ou se manifestar${alvo}`,
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/citação|citad[oa]/i.test(txt)) {
+    return {
+      categoria: "CITAÇÃO",
+      autor_do_ato: "Cartório / Oficial de Justiça",
+      descricao_assertiva: "Citação do réu para integrar o processo",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/expedição.*mandado|mandado.*expedido/i.test(txt)) {
+    return {
+      categoria: "MANDADO EXPEDIDO",
+      autor_do_ato: "Cartório",
+      descricao_assertiva: "Mandado expedido para cumprimento por oficial de justiça",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/conclus[ãa]o|conclusos/i.test(txt)) {
+    return {
+      categoria: "CONCLUSÃO",
+      autor_do_ato: "Cartório (envio ao juiz)",
+      descricao_assertiva: "Autos enviados ao juiz para análise",
+      urgencia: "BAIXA"
+    };
+  }
+
+  if (/audiência designada|designação.*audiência/i.test(txt)) {
+    return {
+      categoria: "AUDIÊNCIA DESIGNADA",
+      autor_do_ato: "Juiz(a) / Cartório",
+      descricao_assertiva: "Audiência designada — fique atento à data marcada",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/audiência realizada|realização.*audiência/i.test(txt)) {
+    return {
+      categoria: "AUDIÊNCIA REALIZADA",
+      autor_do_ato: "Juízo",
+      descricao_assertiva: "Audiência foi realizada — verificar a ata",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/perícia|laudo pericial/i.test(txt)) {
+    return {
+      categoria: "PERÍCIA",
+      autor_do_ato: "Perito judicial",
+      descricao_assertiva: /laudo/i.test(txt) ? "Laudo pericial juntado aos autos" : "Atos relacionados à perícia judicial",
+      urgencia: "MÉDIA"
+    };
+  }
+
+  // === Penhora / execução / bloqueio (alta urgência financeira) ===
+  if (/bloqueio.*on.?line|penhora.*on.?line|sisbajud|bacenjud/i.test(txt)) {
+    return {
+      categoria: "BLOQUEIO/PENHORA ONLINE",
+      autor_do_ato: "Juízo (execução)",
+      descricao_assertiva: "Bloqueio/penhora online de valores via SISBAJUD/BACENJUD",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/penhora/i.test(txt)) {
+    return {
+      categoria: "PENHORA",
+      autor_do_ato: "Juízo / Oficial de Justiça",
+      descricao_assertiva: "Ato de constrição patrimonial (penhora de bens)",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/leilão|hasta pública/i.test(txt)) {
+    return {
+      categoria: "LEILÃO/HASTA",
+      autor_do_ato: "Juízo",
+      descricao_assertiva: "Movimentação relativa a leilão/hasta pública de bens",
+      urgencia: "ALTA"
+    };
+  }
+
+  // === Encerramento ===
+  if (/arquivamento|arquivad[oa]/i.test(txt)) {
+    let detalhe = "Processo arquivado";
+    if (/definitiv/i.test(txt)) detalhe = "Processo arquivado DEFINITIVAMENTE";
+    else if (/provisór/i.test(txt)) detalhe = "Processo arquivado provisoriamente";
+    return {
+      categoria: "ARQUIVAMENTO",
+      autor_do_ato: "Cartório",
+      descricao_assertiva: detalhe,
+      urgencia: "MÉDIA"
+    };
+  }
+
+  if (/baixa definitiva|trânsito em julgado/i.test(txt)) {
+    return {
+      categoria: "TRÂNSITO EM JULGADO / BAIXA",
+      autor_do_ato: "Cartório",
+      descricao_assertiva: "Processo transitou em julgado / baixa definitiva (não cabe mais recurso)",
+      urgencia: "ALTA"
+    };
+  }
+
+  if (/conversão.*autos.*eletrônic/i.test(txt)) {
+    return {
+      categoria: "CONVERSÃO ELETRÔNICA",
+      autor_do_ato: "Cartório",
+      descricao_assertiva: "Conversão dos autos físicos para eletrônicos (ato administrativo)",
+      urgencia: "BAIXA"
+    };
+  }
+
+  // === Fallback inteligente: usa o nome bruto do TPU ou do conteúdo ===
+  const nomeFormatado = (nome || conteudo || "Movimento processual sem descrição padronizada").trim();
+  return {
+    categoria: nomeFormatado.toUpperCase().slice(0, 60),
+    autor_do_ato: "Não identificado pelo registro do tribunal",
+    descricao_assertiva: nomeFormatado.charAt(0).toUpperCase() + nomeFormatado.slice(1),
+    urgencia: "BAIXA"
+  };
+}
+
+// =============================================================
+// BUSCA CNJ DATAJUD (fonte primária — código TPU oficial)
+// =============================================================
 async function buscarCNJ(trib, num) {
   try {
     const apiKey = process.env.DATAJUD_API_KEY || "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==";
@@ -195,68 +477,240 @@ async function buscarCNJ(trib, num) {
     const p = d?.hits?.hits?.[0]?._source;
     if (!p) return { ok: false, erro: "Processo não encontrado na base do CNJ" };
 
-    // Movimentos ordenados do mais recente para o mais antigo
+    // Movimentos ordenados do mais recente para o mais antigo — pega 10
     const movsOrdenados = [...(p.movimentos || [])].sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora));
     const movsLimitados = movsOrdenados.slice(0, 10);
 
-    // Estrutura cada movimento com responsável e código
-    const historico = movsLimitados.map(m => ({
+    const movimentos = movsLimitados.map(m => ({
       data: fmtDataBR(m.dataHora),
       data_iso: m.dataHora,
-      nome_movimento: m.nome || "Movimento sem descrição",
+      nome: m.nome || "",
       codigo_tpu: m.codigo || null,
-      responsavel: identificarResponsavel(m),
       complementos: (m.complementosTabelados || []).map(c => c?.descricao).filter(Boolean)
     }));
 
     return {
       ok: true,
+      partes_polos: p.polos || null,
       autor: p.polos?.find(x => x.polo === "ATIVO")?.partes?.[0]?.nome || null,
       reu: p.polos?.find(x => x.polo === "PASSIVO")?.partes?.[0]?.nome || null,
       classe: p.classe?.nome || null,
+      classe_codigo: p.classe?.codigo || null,
       assunto: p.assuntos?.[0]?.nome || null,
+      assunto_codigo: p.assuntos?.[0]?.codigo || null,
       orgao_julgador: p.orgaoJulgador?.nome || null,
       grau: p.grau || null,
-      historico
+      data_ajuizamento: p.dataAjuizamento || null,
+      sistema: p.sistema?.nome || null,
+      formato: p.formato?.nome || null,
+      movimentos
     };
   } catch (e) {
     return { ok: false, erro: `Erro de conexão com CNJ: ${e.message}` };
   }
 }
 
-// === BUSCA ESCAVADOR ===
-async function buscarEsc(numFmt) {
+// =============================================================
+// BUSCA ESCAVADOR — capa do processo
+// =============================================================
+async function buscarEscCapa(numFmt) {
   try {
     const key = process.env.ESCAVADOR_API_KEY;
-    if (!key) return { ok: false, erro: "API Escavador não configurada" };
+    if (!key) return { ok: false, erro: "API Escavador não configurada (ESCAVADOR_API_KEY ausente)" };
 
     const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}`, {
       headers: { "Authorization": `Bearer ${key}`, "X-Requested-With": "XMLHttpRequest" }
     });
 
-    if (!res.ok) return { ok: false, erro: `Escavador retornou status ${res.status}` };
+    if (!res.ok) return { ok: false, erro: `Escavador (capa) retornou status ${res.status}` };
 
     const d = await res.json();
-    const p = d?.items?.[0];
-    if (!p) return { ok: false, erro: "Processo não encontrado no Escavador" };
+    const p = d?.items?.[0] || d; // resposta pode vir solta também
+    if (!p || (!p.numero_cnj && !p.fontes)) return { ok: false, erro: "Processo não encontrado no Escavador" };
 
     const f = p.fontes?.[0] || {};
     return {
       ok: true,
       autor: f.partes?.find(x => x.polo === "ATIVO")?.nome || p.titulo_polo_ativo || null,
       reu: f.partes?.find(x => x.polo === "PASSIVO")?.nome || p.titulo_polo_passivo || null,
-      ultimo_movimento: f.movimentacoes?.[0]?.conteudo || null
+      status_predito: f.status_predito || null,
+      data_ultima_movimentacao: p.data_ultima_movimentacao || f.data_ultima_movimentacao || null,
+      fontes_arquivadas: p.fontes_tribunais_estao_arquivadas ?? null,
+      partes_completas: f.partes || []
     };
   } catch (e) {
-    return { ok: false, erro: `Erro de conexão com Escavador: ${e.message}` };
+    return { ok: false, erro: `Erro de conexão com Escavador (capa): ${e.message}` };
   }
 }
 
-// === ENDPOINT PRINCIPAL ===
+// =============================================================
+// BUSCA ESCAVADOR — movimentações com TEXTO DESCRITIVO
+// É essa rota que dá o "conteudo" rico que o Datajud não tem
+// =============================================================
+async function buscarEscMovs(numFmt, limite = 10) {
+  try {
+    const key = process.env.ESCAVADOR_API_KEY;
+    if (!key) return { ok: false, erro: "API Escavador não configurada" };
+
+    const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}/movimentacoes`, {
+      headers: { "Authorization": `Bearer ${key}`, "X-Requested-With": "XMLHttpRequest" }
+    });
+
+    if (!res.ok) return { ok: false, erro: `Escavador (movs) retornou status ${res.status}` };
+
+    const d = await res.json();
+    const items = d?.items || d?.data || [];
+    if (!items.length) return { ok: false, erro: "Sem movimentações no Escavador" };
+
+    const movs = items.slice(0, limite).map(m => ({
+      data: fmtDataBR(m.data),
+      data_iso: m.data || null,
+      tipo: m.tipo || null,
+      conteudo: m.conteudo || m.descricao || null,
+      classificacao_predita: m.classificacao_predita?.nome || null
+    }));
+
+    return { ok: true, movimentos: movs };
+  } catch (e) {
+    return { ok: false, erro: `Erro de conexão com Escavador (movs): ${e.message}` };
+  }
+}
+
+// =============================================================
+// BUSCA JUSBRASIL (opcional — exige contrato/token comercial)
+// Se não tiver token configurado, retorna inativa silenciosamente.
+// Endpoint usado: API Jusbrasil Soluções (Consulta PRO)
+// =============================================================
+async function buscarJusBrasil(numFmt) {
+  try {
+    const token = process.env.JUSBRASIL_API_TOKEN;
+    if (!token) return { ok: false, erro: "API JusBrasil não configurada (JUSBRASIL_API_TOKEN ausente)" };
+
+    // Endpoint comercial - estrutura padrão da API Jusbrasil Soluções
+    const res = await fetch(`https://api.jusbrasil.com.br/v2/processos/numero_cnj/${numFmt}`, {
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }
+    });
+
+    if (!res.ok) return { ok: false, erro: `JusBrasil retornou status ${res.status}` };
+
+    const d = await res.json();
+    const p = d?.processo || d;
+    if (!p) return { ok: false, erro: "Sem dados no JusBrasil" };
+
+    const andamentos = (p.andamentos || []).slice(0, 10).map(a => ({
+      data: fmtDataBR(a.data),
+      data_iso: a.data,
+      descricao: a.descricao,
+      classificacao: a.classificacao || null
+    }));
+
+    return {
+      ok: true,
+      autor: (p.partes || []).find(x => /autor/i.test(x.tipo))?.nome || null,
+      reu: (p.partes || []).find(x => /réu|reu/i.test(x.tipo))?.nome || null,
+      classe: p.classe || null,
+      status: p.status || null,
+      andamentos
+    };
+  } catch (e) {
+    return { ok: false, erro: `Erro de conexão com JusBrasil: ${e.message}` };
+  }
+}
+
+// =============================================================
+// FUSÃO INTELIGENTE: combina os movimentos do CNJ com o conteúdo
+// descritivo do Escavador/JusBrasil pareando por DATA mais próxima
+// =============================================================
+function fundirMovimentos({ movsCNJ = [], movsEsc = [], andJB = [] }) {
+  // O CNJ é a base (códigos TPU oficiais). Vou enriquecer com texto do Escavador/JusBrasil.
+  return movsCNJ.map(mc => {
+    const dataAlvo = mc.data_iso ? new Date(mc.data_iso).getTime() : null;
+
+    // Encontra movimento do Escavador na mesma data (tolerância: 24h)
+    const matchEsc = dataAlvo
+      ? movsEsc.find(me => {
+          if (!me.data_iso) return false;
+          const diff = Math.abs(new Date(me.data_iso).getTime() - dataAlvo);
+          return diff <= 24 * 60 * 60 * 1000;
+        })
+      : null;
+
+    const matchJB = dataAlvo
+      ? andJB.find(aj => {
+          if (!aj.data_iso) return false;
+          const diff = Math.abs(new Date(aj.data_iso).getTime() - dataAlvo);
+          return diff <= 24 * 60 * 60 * 1000;
+        })
+      : null;
+
+    // Texto descritivo: prioriza Escavador (mais rico), depois JusBrasil, depois nome TPU
+    const conteudoDescritivo =
+      matchEsc?.conteudo ||
+      matchJB?.descricao ||
+      [mc.nome, ...(mc.complementos || [])].filter(Boolean).join(" — ") ||
+      mc.nome;
+
+    const classif = classificarMovimento({
+      nome: mc.nome,
+      codigo: mc.codigo_tpu,
+      conteudo: conteudoDescritivo,
+      complementos: mc.complementos
+    });
+
+    return {
+      data: mc.data,
+      data_iso: mc.data_iso,
+      dias_atras: diasDesde(mc.data_iso),
+      // Códigos oficiais do CNJ
+      codigo_tpu_cnj: mc.codigo_tpu,
+      nome_tpu_cnj: mc.nome,
+      complementos_tabelados: mc.complementos,
+      // Texto descritivo (Escavador/JusBrasil)
+      texto_descritivo: conteudoDescritivo,
+      tipo_escavador: matchEsc?.tipo || null,
+      classificacao_escavador: matchEsc?.classificacao_predita || null,
+      classificacao_jusbrasil: matchJB?.classificacao || null,
+      // Análise determinística
+      categoria: classif.categoria,
+      autor_do_ato: classif.autor_do_ato,
+      descricao_assertiva: classif.descricao_assertiva,
+      urgencia: classif.urgencia
+    };
+  });
+}
+
+// =============================================================
+// RESUMO EXECUTIVO PARA O GPT (anti-genericidade)
+// =============================================================
+function montarResumoExecutivo(historico, partes, classe) {
+  if (!historico || !historico.length) {
+    return "Sem histórico de movimentações disponível.";
+  }
+  const ult = historico[0];
+  const altaUrg = historico.filter(h => h.urgencia === "ALTA");
+
+  let resumo = `Processo de ${classe || "classe não informada"} entre ${partes.autor || "[autor]"} (autor) e ${partes.reu || "[réu]"} (réu). `;
+  resumo += `Última movimentação em ${ult.data} (${ult.dias_atras} dias atrás): ${ult.descricao_assertiva}. `;
+  resumo += `Categoria: ${ult.categoria}. Quem fez o ato: ${ult.autor_do_ato}. `;
+
+  if (altaUrg.length) {
+    resumo += `Atenção: ${altaUrg.length} movimentação(ões) de alta urgência nas últimas 10. `;
+  }
+
+  if (ult.texto_descritivo && ult.texto_descritivo !== ult.nome_tpu_cnj) {
+    resumo += `Texto integral do andamento: "${ult.texto_descritivo}".`;
+  }
+
+  return resumo.trim();
+}
+
+// =============================================================
+// ENDPOINT PRINCIPAL
+// =============================================================
 app.get("/consultar-processo", async (req, res) => {
   const num = limparNum(req.query.numero_processo);
 
-  // Validação de entrada
+  // Validação
   const validacao = validarCNJ(num);
   if (!validacao.valido) {
     return res.json({
@@ -275,88 +729,160 @@ app.get("/consultar-processo", async (req, res) => {
     return res.json({
       encontrado: false,
       erro: "TRIBUNAL_NAO_IDENTIFICADO",
-      mensagem: `Código de tribunal "${codTrib}" não reconhecido no número informado.`,
+      mensagem: `Código de tribunal "${codTrib}" não reconhecido.`,
       orientacao_para_atendente: "Confirme o número do processo com o cliente — pode haver dígito digitado errado."
     });
   }
 
-  // Busca paralela nas duas bases
-  const [resCNJ, resEsc] = await Promise.all([
+  // Busca paralela em todas as fontes
+  const [resCNJ, resEscCapa, resEscMovs, resJB] = await Promise.all([
     buscarCNJ(trib, num),
-    buscarEsc(numFmt)
+    buscarEscCapa(numFmt),
+    buscarEscMovs(numFmt, 10),
+    buscarJusBrasil(numFmt)
   ]);
 
-  // Define qual base alimentou o resultado
-  let baseUtilizada;
-  if (resCNJ.ok && resEsc.ok) baseUtilizada = "CNJ Datajud + Escavador (fusão de dados)";
-  else if (resCNJ.ok) baseUtilizada = "CNJ Datajud";
-  else if (resEsc.ok) baseUtilizada = "Escavador";
-  else {
+  // Define base utilizada
+  const fontesAtivas = [];
+  if (resCNJ.ok) fontesAtivas.push("CNJ Datajud");
+  if (resEscCapa.ok || resEscMovs.ok) fontesAtivas.push("Escavador");
+  if (resJB.ok) fontesAtivas.push("JusBrasil");
+
+  if (!fontesAtivas.length) {
     return res.json({
       encontrado: false,
       erro: "PROCESSO_NAO_LOCALIZADO",
       numero_processo: numFmt,
       tribunal: trib.nome,
-      mensagem: "O processo não foi localizado em nenhuma das bases consultadas (CNJ e Escavador).",
-      detalhe_cnj: resCNJ.erro,
-      detalhe_escavador: resEsc.erro,
+      mensagem: "O processo não foi localizado em nenhuma das bases consultadas (CNJ, Escavador, JusBrasil).",
+      detalhes: {
+        cnj: resCNJ.erro,
+        escavador_capa: resEscCapa.erro,
+        escavador_movimentacoes: resEscMovs.erro,
+        jusbrasil: resJB.erro
+      },
       orientacao_para_atendente: "Confirme o número com o cliente. Se estiver correto, o processo pode estar em segredo de justiça ou ainda não indexado."
     });
   }
 
-  // Fusão de partes — Escavador tem prioridade quando CNJ vem censurado/vazio
-  const autor = (resEsc.ok && resEsc.autor) ? resEsc.autor : (resCNJ.autor || "Não disponibilizado pelo tribunal");
-  const reu = (resEsc.ok && resEsc.reu) ? resEsc.reu : (resCNJ.reu || "Não disponibilizado pelo tribunal");
+  // Fusão de partes — Escavador e JusBrasil têm prioridade quando CNJ vem censurado
+  const autor =
+    (resEscCapa.ok && resEscCapa.autor) ||
+    (resJB.ok && resJB.autor) ||
+    resCNJ.autor ||
+    "Não disponibilizado pelo tribunal";
 
-  // Extrai a movimentação mais recente como destaque
-  const ultimaMov = resCNJ.historico?.[0] || null;
-  const diasDecorridos = ultimaMov ? diasDesde(ultimaMov.data_iso) : null;
+  const reu =
+    (resEscCapa.ok && resEscCapa.reu) ||
+    (resJB.ok && resJB.reu) ||
+    resCNJ.reu ||
+    "Não disponibilizado pelo tribunal";
 
-  // Monta a resposta estruturada
-  const resposta = {
+  // Funde os movimentos do CNJ com texto descritivo do Escavador/JusBrasil
+  const historico = fundirMovimentos({
+    movsCNJ: resCNJ.ok ? resCNJ.movimentos : [],
+    movsEsc: resEscMovs.ok ? resEscMovs.movimentos : [],
+    andJB: resJB.ok ? resJB.andamentos : []
+  });
+
+  // Se o CNJ falhou mas Escavador trouxe movimentos, usa Escavador como base
+  const historicoFinal = historico.length
+    ? historico
+    : (resEscMovs.ok ? resEscMovs.movimentos.map(m => {
+        const c = classificarMovimento({ nome: m.tipo || "", conteudo: m.conteudo || "" });
+        return {
+          data: m.data,
+          data_iso: m.data_iso,
+          dias_atras: diasDesde(m.data_iso),
+          codigo_tpu_cnj: null,
+          nome_tpu_cnj: null,
+          texto_descritivo: m.conteudo,
+          tipo_escavador: m.tipo,
+          classificacao_escavador: m.classificacao_predita,
+          categoria: c.categoria,
+          autor_do_ato: c.autor_do_ato,
+          descricao_assertiva: c.descricao_assertiva,
+          urgencia: c.urgencia
+        };
+      }) : []);
+
+  const ultima = historicoFinal[0] || null;
+  const partes = { autor, reu };
+  const classe = resCNJ.classe || resJB.classe || "Não informada";
+
+  // Resposta consolidada
+  res.json({
     encontrado: true,
     numero_processo: numFmt,
     tribunal: trib.nome,
     sigla_tribunal: trib.sigla,
-    base_de_dados_utilizada: baseUtilizada,
-    grau: resCNJ.grau || null,
-    classe_processual: resCNJ.classe || "Não informada",
-    assunto_principal: resCNJ.assunto || "Não informado",
-    orgao_julgador: resCNJ.orgao_julgador || "Não informado",
-    partes: { autor, reu },
+    fontes_consultadas: fontesAtivas,
+    base_de_dados_utilizada: fontesAtivas.join(" + "),
 
-    // Movimentação mais recente — destacada para o GPT
-    dados_da_movimentacao: ultimaMov ? {
-      data_registro: ultimaMov.data,
-      data_iso: ultimaMov.data_iso,
-      dias_desde_movimentacao: diasDecorridos,
-      tipo_da_movimentacao: ultimaMov.nome_movimento,
-      codigo_tpu: ultimaMov.codigo_tpu,
-      texto_do_andamento: ultimaMov.complementos?.length > 0
-        ? ultimaMov.complementos.join("; ")
-        : ultimaMov.nome_movimento,
-      quem_fez_o_movimento: ultimaMov.responsavel
+    // Capa
+    grau: resCNJ.grau || null,
+    classe_processual: classe,
+    codigo_classe: resCNJ.classe_codigo || null,
+    assunto_principal: resCNJ.assunto || "Não informado",
+    codigo_assunto: resCNJ.assunto_codigo || null,
+    orgao_julgador: resCNJ.orgao_julgador || "Não informado",
+    sistema_processual: resCNJ.sistema || null,
+    formato: resCNJ.formato || null,
+    data_ajuizamento: fmtDataBR(resCNJ.data_ajuizamento) || null,
+    partes,
+    status_predito_escavador: resEscCapa.ok ? resEscCapa.status_predito : null,
+    fontes_arquivadas: resEscCapa.ok ? resEscCapa.fontes_arquivadas : null,
+
+    // Resumo executivo (string pronta pro GPT não inventar)
+    resumo_executivo: montarResumoExecutivo(historicoFinal, partes, classe),
+
+    // Última movimentação destacada e DESCRITIVA
+    dados_da_movimentacao: ultima ? {
+      data_registro: ultima.data,
+      data_iso: ultima.data_iso,
+      dias_desde_movimentacao: ultima.dias_atras,
+      categoria: ultima.categoria,
+      tipo_da_movimentacao: ultima.nome_tpu_cnj || ultima.tipo_escavador,
+      codigo_tpu: ultima.codigo_tpu_cnj,
+      descricao_assertiva: ultima.descricao_assertiva,
+      texto_completo_do_andamento: ultima.texto_descritivo,
+      quem_fez_o_movimento: ultima.autor_do_ato,
+      urgencia: ultima.urgencia
     } : null,
 
-    // Histórico completo (até 10 movimentos) para análise contextual
-    historico_completo: resCNJ.historico || [],
+    // Histórico das ÚLTIMAS 10 movimentações (com texto descritivo + classificação)
+    historico_ultimas_10: historicoFinal,
 
-    // Campo cru do Escavador como fallback descritivo
-    descricao_escavador: resEsc.ok ? resEsc.ultimo_movimento : null,
-
-    // Sinalização de qualidade dos dados (anti-alucinação)
+    // Sinais de qualidade dos dados (anti-alucinação)
     qualidade_dos_dados: {
       cnj_disponivel: resCNJ.ok,
-      escavador_disponivel: resEsc.ok,
+      escavador_capa_disponivel: resEscCapa.ok,
+      escavador_movimentacoes_disponivel: resEscMovs.ok,
+      jusbrasil_disponivel: resJB.ok,
       partes_completas: autor !== "Não disponibilizado pelo tribunal" && reu !== "Não disponibilizado pelo tribunal",
-      historico_disponivel: (resCNJ.historico?.length || 0) > 0
-    }
-  };
+      historico_disponivel: historicoFinal.length > 0,
+      total_movimentos_retornados: historicoFinal.length,
+      tem_texto_descritivo: historicoFinal.some(h => h.texto_descritivo && h.texto_descritivo !== h.nome_tpu_cnj)
+    },
 
-  res.json(resposta);
+    // Instruções de uso para o LLM (anti-genericidade)
+    instrucoes_para_gpt: {
+      use_apenas: "Responda usando exclusivamente os campos descricao_assertiva, texto_completo_do_andamento, categoria e quem_fez_o_movimento. Não invente conteúdo.",
+      ao_descrever_movimentacao: "Diga a CATEGORIA + a DESCRIÇÃO ASSERTIVA + QUEM fez o ato + QUANDO. Se houver texto_completo_do_andamento diferente do nome do código TPU, cite-o entre aspas.",
+      se_dado_faltar: "Se um campo vier nulo ou 'Não disponibilizado', informe ao usuário que o tribunal não publicou esse dado — não tente inferir."
+    }
+  });
 });
 
-// Endpoint de saúde para monitoramento
-app.get("/health", (req, res) => res.json({ status: "online", timestamp: new Date().toISOString() }));
+// Health
+app.get("/health", (req, res) => res.json({
+  status: "online",
+  timestamp: new Date().toISOString(),
+  apis_configuradas: {
+    cnj_datajud: true,
+    escavador: !!process.env.ESCAVADOR_API_KEY,
+    jusbrasil: !!process.env.JUSBRASIL_API_TOKEN
+  }
+}));
 
 app.listen(PORT, "0.0.0.0", () => console.log(`Servidor online na porta ${PORT}`));
