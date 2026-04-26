@@ -1,14 +1,17 @@
 import express from "express";
-import fetch from "node-fetch";
+import cors from "cors";
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 const PORT = process.env.PORT || 3000;
 const DATAJUD_API_KEY = process.env.DATAJUD_API_KEY;
 
 app.get("/", (req, res) => {
   res.json({
     status: "API ativa",
-    uso: "/consultar-processo?numero_processo=8005761-72.2025.8.05.0004"
+    uso: "POST /consultar-processo"
   });
 });
 
@@ -17,18 +20,14 @@ function limparNumeroProcesso(numero) {
 }
 
 function identificarTribunal(numeroLimpo) {
-  const segmento = numeroLimpo.substring(13, 14);
-  const codigoTribunal = numeroLimpo.substring(14, 16);
-
-  const tribunaisEstaduais = {
-    "05": "tjba"
-  };
-
   if (numeroLimpo.length !== 20) {
     return { valido: false };
   }
 
-  if (segmento === "8" && tribunaisEstaduais[codigoTribunal]) {
+  const segmento = numeroLimpo.substring(13, 14);
+  const codigoTribunal = numeroLimpo.substring(14, 16);
+
+  if (segmento === "8" && codigoTribunal === "05") {
     return {
       valido: true,
       tribunal: "Tribunal de Justiça do Estado da Bahia",
@@ -41,8 +40,6 @@ function identificarTribunal(numeroLimpo) {
   return {
     valido: true,
     tribunal: "Tribunal identificado, mas ainda não configurado",
-    sigla: null,
-    segmento: "Não configurado",
     endpoint: null
   };
 }
@@ -57,7 +54,11 @@ function extrairUltimoAndamento(processo) {
     };
   }
 
-  const ultimo = movimentos[movimentos.length - 1];
+  const ordenados = movimentos.sort((a, b) => {
+    return new Date(b.dataHora || b.data || 0) - new Date(a.dataHora || a.data || 0);
+  });
+
+  const ultimo = ordenados[0];
 
   return {
     andamento: ultimo.nome || ultimo.descricao || "Movimentação sem descrição detalhada.",
@@ -65,8 +66,8 @@ function extrairUltimoAndamento(processo) {
   };
 }
 
-app.get("/consultar-processo", async (req, res) => {
-  const numeroOriginal = req.query.numero_processo;
+app.post("/consultar-processo", async (req, res) => {
+  const numeroOriginal = req.body.numeroProcesso || req.body.numero_processo;
   const numeroLimpo = limparNumeroProcesso(numeroOriginal);
 
   const identificacao = identificarTribunal(numeroLimpo);
@@ -76,6 +77,13 @@ app.get("/consultar-processo", async (req, res) => {
       encontrado: false,
       numero_processo: numeroOriginal,
       mensagem: "Número do processo inválido ou incompleto."
+    });
+  }
+
+  if (!DATAJUD_API_KEY) {
+    return res.status(500).json({
+      encontrado: false,
+      mensagem: "DATAJUD_API_KEY não configurada no Railway."
     });
   }
 
@@ -93,36 +101,45 @@ app.get("/consultar-processo", async (req, res) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `ApiKey ${DATAJUD_API_KEY}`
+        "Authorization": `APIKey ${DATAJUD_API_KEY}`
       },
       body: JSON.stringify({
         query: {
-          bool: {
-            should: [
-              { term: { "numeroProcesso.keyword": numeroLimpo } },
-              { match: { numeroProcesso: numeroLimpo } }
-            ]
+          match: {
+            numeroProcesso: numeroLimpo
           }
         }
       })
     });
 
     const dados = await resposta.json();
+
+    if (!resposta.ok) {
+      return res.status(resposta.status).json({
+        encontrado: false,
+        erro: "Erro retornado pelo DataJud/CNJ.",
+        status_datajud: resposta.status,
+        detalhe: dados
+      });
+    }
+
     const processo = dados?.hits?.hits?.[0];
 
     if (!processo) {
       return res.status(404).json({
         encontrado: false,
         numero_processo: numeroOriginal,
+        numero_limpo: numeroLimpo,
         tribunal_identificado: identificacao.tribunal,
         fonte_consultada: "DataJud/CNJ",
-        resumo_formal: "O processo foi identificado como pertencente ao TJBA, mas não foi localizado andamento na base DataJud.",
-        explicacao_simples: "O número parece correto, mas a base consultada não trouxe os movimentos do processo neste momento.",
-        proximo_passo_provavel: "Consultar manualmente no site do TJBA ou encaminhar ao advogado responsável.",
+        resumo_formal: "O processo foi identificado como pertencente ao TJBA, mas não foi localizado na base DataJud.",
+        explicacao_simples: "O número parece correto, mas a base consultada não retornou dados do processo neste momento.",
+        proximo_passo_provavel: "Consultar manualmente no sistema oficial do TJBA.",
         necessita_advogado: true
       });
     }
 
+    const fonte = processo._source;
     const ultimo = extrairUltimoAndamento(processo);
 
     return res.json({
@@ -133,11 +150,15 @@ app.get("/consultar-processo", async (req, res) => {
       sigla_tribunal: identificacao.sigla,
       segmento_justica: identificacao.segmento,
       fonte_consultada: "DataJud/CNJ",
+      classe: fonte?.classe?.nome || null,
+      grau: fonte?.grau || null,
+      orgao_julgador: fonte?.orgaoJulgador?.nome || null,
+      data_ajuizamento: fonte?.dataAjuizamento || null,
       ultimo_andamento: ultimo.andamento,
       data_ultimo_andamento: ultimo.data,
       resumo_formal: `O processo nº ${numeroOriginal} foi localizado na base DataJud/CNJ, vinculado ao ${identificacao.tribunal}. O último andamento identificado foi: ${ultimo.andamento}.`,
-      explicacao_simples: "Isso significa que houve movimentação registrada no processo. A interpretação jurídica deve ser confirmada pelo advogado responsável.",
-      proximo_passo_provavel: "Aguardar nova movimentação ou confirmar diretamente no sistema do tribunal.",
+      explicacao_simples: "A consulta retornou dados públicos do DataJud/CNJ. A interpretação jurídica deve ser confirmada pelo advogado responsável antes de qualquer providência processual.",
+      proximo_passo_provavel: "Analisar o andamento e conferir o processo no sistema oficial do tribunal.",
       necessita_advogado: true
     });
 
@@ -146,12 +167,12 @@ app.get("/consultar-processo", async (req, res) => {
       encontrado: false,
       numero_processo: numeroOriginal,
       erro: "Falha técnica na consulta ao DataJud/CNJ.",
-      explicacao_simples: "O sistema tentou consultar o processo, mas não conseguiu acessar a base de dados neste momento.",
+      detalhe: erro.message,
       necessita_advogado: true
     });
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Servidor rodando na porta ${PORT}`);
 });
