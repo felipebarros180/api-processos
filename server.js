@@ -7,7 +7,9 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const DATAJUD_API_KEY = process.env.DATAJUD_API_KEY;
+const DATAJUD_API_KEY =
+  process.env.DATAJUD_API_KEY ||
+  "cDZHYzIZa0JadVREZDJCendQbXY6SkJTZnjLV9TRENyQk1RdnFKZGRQdw==";
 const BASE_DATAJUD = "https://api-publica.datajud.cnj.jus.br";
 
 const TRIBUNAIS = {
