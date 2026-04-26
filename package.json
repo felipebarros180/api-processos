@@ -1,7 +1,7 @@
 {
   "name": "api-processos",
   "version": "1.0.0",
-  "description": "API para consulta de processos",
+  "description": "API profissional para consulta processual",
   "type": "module",
   "main": "server.js",
   "scripts": {
