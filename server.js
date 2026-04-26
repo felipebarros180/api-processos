@@ -7,11 +7,9 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.DATAJUD_API_KEY;
-
 const BASE_DATAJUD = "https://api-publica.datajud.cnj.jus.br";
 
 const TRIBUNAIS = {
-  // Justiça Estadual
   "8.01": { sigla: "TJAC", nome: "Tribunal de Justiça do Acre", endpoint: "api_publica_tjac", consulta: "https://esaj.tjac.jus.br/cpopg/open.do" },
   "8.02": { sigla: "TJAL", nome: "Tribunal de Justiça de Alagoas", endpoint: "api_publica_tjal", consulta: "https://www2.tjal.jus.br/cpopg/open.do" },
   "8.03": { sigla: "TJAP", nome: "Tribunal de Justiça do Amapá", endpoint: "api_publica_tjap", consulta: "https://tucujuris.tjap.jus.br/tucujuris/pages/consultar-processo/consultar-processo.html" },
@@ -40,7 +38,6 @@ const TRIBUNAIS = {
   "8.26": { sigla: "TJSP", nome: "Tribunal de Justiça de São Paulo", endpoint: "api_publica_tjsp", consulta: "https://esaj.tjsp.jus.br/cpopg/open.do" },
   "8.27": { sigla: "TJTO", nome: "Tribunal de Justiça do Tocantins", endpoint: "api_publica_tjto", consulta: "https://eproc1.tjto.jus.br/eprocV2_prod_1grau/externo_controlador.php?acao=processo_consulta_publica" },
 
-  // Justiça Federal
   "4.01": { sigla: "TRF1", nome: "Tribunal Regional Federal da 1ª Região", endpoint: "api_publica_trf1", consulta: "https://pje1g.trf1.jus.br/consultapublica/ConsultaPublica/listView.seam" },
   "4.02": { sigla: "TRF2", nome: "Tribunal Regional Federal da 2ª Região", endpoint: "api_publica_trf2", consulta: "https://eproc.jfrj.jus.br/eproc/externo_controlador.php?acao=processo_consulta_publica" },
   "4.03": { sigla: "TRF3", nome: "Tribunal Regional Federal da 3ª Região", endpoint: "api_publica_trf3", consulta: "https://pje1g.trf3.jus.br/pje/ConsultaPublica/listView.seam" },
@@ -48,7 +45,6 @@ const TRIBUNAIS = {
   "4.05": { sigla: "TRF5", nome: "Tribunal Regional Federal da 5ª Região", endpoint: "api_publica_trf5", consulta: "https://pje1g.trf5.jus.br/pje/ConsultaPublica/listView.seam" },
   "4.06": { sigla: "TRF6", nome: "Tribunal Regional Federal da 6ª Região", endpoint: "api_publica_trf6", consulta: "https://pje1g.trf6.jus.br/consultapublica/ConsultaPublica/listView.seam" },
 
-  // Justiça do Trabalho
   "5.01": { sigla: "TRT1", nome: "TRT da 1ª Região", endpoint: "api_publica_trt1", consulta: "https://pje.trt1.jus.br/consultaprocessual/" },
   "5.02": { sigla: "TRT2", nome: "TRT da 2ª Região", endpoint: "api_publica_trt2", consulta: "https://pje.trt2.jus.br/consultaprocessual/" },
   "5.03": { sigla: "TRT3", nome: "TRT da 3ª Região", endpoint: "api_publica_trt3", consulta: "https://pje.trt3.jus.br/consultaprocessual/" },
@@ -74,7 +70,6 @@ const TRIBUNAIS = {
   "5.23": { sigla: "TRT23", nome: "TRT da 23ª Região", endpoint: "api_publica_trt23", consulta: "https://pje.trt23.jus.br/consultaprocessual/" },
   "5.24": { sigla: "TRT24", nome: "TRT da 24ª Região", endpoint: "api_publica_trt24", consulta: "https://pje.trt24.jus.br/consultaprocessual/" },
 
-  // Superiores
   "3.00": { sigla: "STJ", nome: "Superior Tribunal de Justiça", endpoint: "api_publica_stj", consulta: "https://processo.stj.jus.br/processo/pesquisa/" },
   "1.00": { sigla: "STF", nome: "Supremo Tribunal Federal", endpoint: "api_publica_stf", consulta: "https://portal.stf.jus.br/processos/listarProcessos.asp" },
   "6.00": { sigla: "TSE", nome: "Tribunal Superior Eleitoral", endpoint: "api_publica_tse", consulta: "https://consultaunificadapje.tse.jus.br/" },
@@ -85,23 +80,20 @@ function limparNumero(numero) {
   return String(numero || "").replace(/\D/g, "");
 }
 
+function formatarNumeroCNJ(numeroLimpo) {
+  if (numeroLimpo.length !== 20) return numeroLimpo;
+  return `${numeroLimpo.slice(0, 7)}-${numeroLimpo.slice(7, 9)}.${numeroLimpo.slice(9, 13)}.${numeroLimpo.slice(13, 14)}.${numeroLimpo.slice(14, 16)}.${numeroLimpo.slice(16, 20)}`;
+}
+
 function chaveTribunal(numeroLimpo) {
   if (numeroLimpo.length !== 20) return null;
 
   const segmento = numeroLimpo.substring(13, 14);
   const tribunal = numeroLimpo.substring(14, 16);
 
-  if (["1", "3", "6", "7"].includes(segmento)) {
-    return `${segmento}.00`;
-  }
+  if (["1", "3", "6", "7"].includes(segmento)) return `${segmento}.00`;
 
   return `${segmento}.${tribunal}`;
-}
-
-function formatarNumeroCNJ(numeroLimpo) {
-  if (numeroLimpo.length !== 20) return numeroLimpo;
-
-  return `${numeroLimpo.slice(0, 7)}-${numeroLimpo.slice(7, 9)}.${numeroLimpo.slice(9, 13)}.${numeroLimpo.slice(13, 14)}.${numeroLimpo.slice(14, 16)}.${numeroLimpo.slice(16, 20)}`;
 }
 
 function linkJusbrasil(numeroFormatado) {
@@ -124,14 +116,14 @@ function montarQuery(numeroLimpo) {
   };
 }
 
-async function consultarDataJud(endpoint, numeroLimpo) {
-  const url = `${BASE_DATAJUD}/${endpoint}/_search`;
+async function consultarDataJud(tribunal, numeroLimpo) {
+  const url = `${BASE_DATAJUD}/${tribunal.endpoint}/_search`;
 
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `APIKey ${API_KEY}`
+      Authorization: `APIKey ${API_KEY}`
     },
     body: JSON.stringify(montarQuery(numeroLimpo))
   });
@@ -180,66 +172,33 @@ function classificarAndamento(texto = "") {
   const t = texto.toLowerCase();
 
   if (t.includes("sentença") || t.includes("julgado")) {
-    return {
-      tipo: "decisão/sentença",
-      risco: "alto",
-      providencia: "Verificar teor integral da decisão e prazo recursal imediatamente."
-    };
+    return { tipo: "decisão/sentença", risco: "alto", providencia: "Verificar teor integral da decisão e eventual prazo recursal imediatamente." };
   }
 
   if (t.includes("intimação") || t.includes("intimado") || t.includes("vista")) {
-    return {
-      tipo: "intimação/prazo",
-      risco: "alto",
-      providencia: "Conferir o teor da intimação e controlar prazo processual."
-    };
+    return { tipo: "intimação/prazo", risco: "alto", providencia: "Conferir o teor da intimação e controlar o prazo processual." };
   }
 
   if (t.includes("concluso") || t.includes("conclusão")) {
-    return {
-      tipo: "aguardando análise do juiz",
-      risco: "baixo",
-      providencia: "Aguardar decisão, mantendo acompanhamento periódico."
-    };
+    return { tipo: "aguardando análise do juiz", risco: "baixo", providencia: "Aguardar decisão, mantendo acompanhamento periódico." };
   }
 
   if (t.includes("audiência")) {
-    return {
-      tipo: "audiência",
-      risco: "médio",
-      providencia: "Verificar data, horário, modalidade e necessidade de preparação da parte."
-    };
+    return { tipo: "audiência", risco: "médio", providencia: "Verificar data, horário, modalidade e necessidade de preparação da parte." };
   }
 
   if (t.includes("perícia") || t.includes("pericial")) {
-    return {
-      tipo: "perícia",
-      risco: "médio",
-      providencia: "Conferir nomeação, data da perícia e necessidade de manifestação técnica."
-    };
+    return { tipo: "perícia", risco: "médio", providencia: "Conferir nomeação, data da perícia e necessidade de manifestação técnica." };
   }
 
-  return {
-    tipo: "movimentação processual",
-    risco: "médio",
-    providencia: "Conferir o teor no sistema oficial do tribunal antes de orientar o cliente."
-  };
+  return { tipo: "movimentação processual", risco: "médio", providencia: "Conferir o teor no sistema oficial do tribunal antes de orientar o cliente." };
 }
 
-app.get("/", (req, res) => {
-  res.json({
-    status: "online",
-    mensagem: "API profissional de consulta processual ativa",
-    uso: "POST /consultar-processo com { numeroProcesso: \"...\" }"
-  });
-});
-
-app.post("/consultar-processo", async (req, res) => {
-  const numeroOriginal = req.body.numeroProcesso || req.body.numero_processo;
-  const numeroLimpo = limparNumero(numeroOriginal);
+async function processarConsulta(numeroRecebido, res) {
+  const numeroLimpo = limparNumero(numeroRecebido);
   const numeroFormatado = formatarNumeroCNJ(numeroLimpo);
 
-  if (!numeroOriginal || numeroLimpo.length !== 20) {
+  if (!numeroRecebido || numeroLimpo.length !== 20) {
     return res.status(400).json({
       encontrado: false,
       erro: "Número de processo inválido. Informe número no padrão CNJ.",
@@ -255,82 +214,114 @@ app.post("/consultar-processo", async (req, res) => {
   }
 
   const chave = chaveTribunal(numeroLimpo);
-  const tribunalPrincipal = TRIBUNAIS[chave];
+  const tribunal = TRIBUNAIS[chave];
 
-  const tentativas = [];
-
-  if (tribunalPrincipal) {
-    tentativas.push(tribunalPrincipal);
-  }
-
-  let processo = null;
-  let tribunalEncontrado = null;
-  let statusDataJud = [];
-
-  for (const tribunal of tentativas) {
-    const resultado = await consultarDataJud(tribunal.endpoint, numeroLimpo);
-
-    statusDataJud.push({
-      tribunal: tribunal.sigla,
-      endpoint: tribunal.endpoint,
-      status: resultado.status,
-      encontrou: Boolean(resultado.processo)
-    });
-
-    if (resultado.processo) {
-      processo = resultado.processo;
-      tribunalEncontrado = tribunal;
-      break;
-    }
-  }
-
-  if (!processo) {
+  if (!tribunal) {
     return res.json({
       encontrado: false,
       numero_processo: numeroFormatado,
-      tribunal_identificado: tribunalPrincipal?.nome || "Não identificado pelo mapeamento",
-      fonte_primaria: "DataJud/CNJ",
-      mensagem: "O processo não foi localizado automaticamente na base pública DataJud/CNJ.",
-      explicacao_simples: "Isso pode ocorrer por ausência de indexação, atraso de atualização, restrição de acesso ou divergência entre os dados do tribunal e a base nacional.",
-      providencia_recomendada: "Consultar manualmente no sistema oficial do tribunal e, se necessário, no Jusbrasil.",
+      mensagem: "Tribunal ainda não configurado nesta API.",
       links_de_conferencia: {
-        tribunal_oficial: tribunalPrincipal?.consulta || null,
         jusbrasil: linkJusbrasil(numeroFormatado)
       },
-      tentativas_realizadas: statusDataJud.slice(0, 10),
       necessita_advogado: true
     });
   }
 
-  const fonte = processo._source || {};
-  const ultimo = extrairUltimoAndamento(fonte);
-  const classificacao = classificarAndamento(ultimo.nome);
+  try {
+    const resultado = await consultarDataJud(tribunal, numeroLimpo);
 
-  return res.json({
-    encontrado: true,
-    numero_processo: numeroFormatado,
-    numero_limpo: numeroLimpo,
-    tribunal_identificado: tribunalEncontrado.nome,
-    sigla_tribunal: tribunalEncontrado.sigla,
-    fonte_primaria: "DataJud/CNJ",
-    classe: fonte?.classe?.nome || null,
-    grau: fonte?.grau || null,
-    orgao_julgador: fonte?.orgaoJulgador?.nome || null,
-    data_ajuizamento: fonte?.dataAjuizamento || null,
-    assuntos: Array.isArray(fonte?.assuntos) ? fonte.assuntos.map(a => a.nome).filter(Boolean) : [],
-    ultimo_andamento: ultimo.nome,
-    data_ultimo_andamento: ultimo.data,
-    classificacao_andamento: classificacao,
-    resumo_formal: `O processo nº ${numeroFormatado} foi localizado na base pública DataJud/CNJ, vinculado ao ${tribunalEncontrado.nome}. O último andamento identificado foi: ${ultimo.nome}.`,
-    explicacao_simples: `Em linguagem simples, o processo teve movimentação registrada como "${ultimo.nome}". A classificação inicial é: ${classificacao.tipo}.`,
-    providencia_recomendada: classificacao.providencia,
-    links_de_conferencia: {
-      tribunal_oficial: tribunalEncontrado.consulta,
-      jusbrasil: linkJusbrasil(numeroFormatado)
-    },
-    ressalva: "A consulta foi realizada em base pública. Antes de qualquer ato processual, recomenda-se conferência no sistema oficial do tribunal.",
-    necessita_advogado: true
+    if (!resultado.ok) {
+      return res.status(500).json({
+        encontrado: false,
+        numero_processo: numeroFormatado,
+        tribunal_identificado: tribunal.nome,
+        erro: "Erro retornado pela base DataJud/CNJ.",
+        status_datajud: resultado.status,
+        detalhe: resultado.data,
+        links_de_conferencia: {
+          tribunal_oficial: tribunal.consulta,
+          jusbrasil: linkJusbrasil(numeroFormatado)
+        },
+        necessita_advogado: true
+      });
+    }
+
+    if (!resultado.processo) {
+      return res.json({
+        encontrado: false,
+        numero_processo: numeroFormatado,
+        tribunal_identificado: tribunal.nome,
+        sigla_tribunal: tribunal.sigla,
+        fonte_primaria: "DataJud/CNJ",
+        mensagem: "O processo não foi localizado automaticamente na base pública DataJud/CNJ.",
+        explicacao_simples: "Isso pode ocorrer por ausência de indexação, atraso de atualização, restrição de acesso ou divergência entre os dados do tribunal e a base nacional.",
+        providencia_recomendada: "Consultar manualmente no sistema oficial do tribunal antes de orientar o cliente.",
+        links_de_conferencia: {
+          tribunal_oficial: tribunal.consulta,
+          jusbrasil: linkJusbrasil(numeroFormatado)
+        },
+        necessita_advogado: true
+      });
+    }
+
+    const fonte = resultado.processo._source || {};
+    const ultimo = extrairUltimoAndamento(fonte);
+    const classificacao = classificarAndamento(ultimo.nome);
+
+    return res.json({
+      encontrado: true,
+      numero_processo: numeroFormatado,
+      numero_limpo: numeroLimpo,
+      tribunal_identificado: tribunal.nome,
+      sigla_tribunal: tribunal.sigla,
+      fonte_primaria: "DataJud/CNJ",
+      classe: fonte?.classe?.nome || null,
+      grau: fonte?.grau || null,
+      orgao_julgador: fonte?.orgaoJulgador?.nome || null,
+      data_ajuizamento: fonte?.dataAjuizamento || null,
+      assuntos: Array.isArray(fonte?.assuntos) ? fonte.assuntos.map(a => a.nome).filter(Boolean) : [],
+      ultimo_andamento: ultimo.nome,
+      data_ultimo_andamento: ultimo.data,
+      classificacao_andamento: classificacao,
+      resumo_formal: `O processo nº ${numeroFormatado} foi localizado na base pública DataJud/CNJ, vinculado ao ${tribunal.nome}. O último andamento identificado foi: ${ultimo.nome}.`,
+      explicacao_simples: `Em linguagem simples, o processo teve movimentação registrada como "${ultimo.nome}". A classificação inicial é: ${classificacao.tipo}.`,
+      providencia_recomendada: classificacao.providencia,
+      links_de_conferencia: {
+        tribunal_oficial: tribunal.consulta,
+        jusbrasil: linkJusbrasil(numeroFormatado)
+      },
+      ressalva: "A consulta foi realizada em base pública. Antes de qualquer ato processual, recomenda-se conferência no sistema oficial do tribunal.",
+      necessita_advogado: true
+    });
+  } catch (erro) {
+    return res.status(500).json({
+      encontrado: false,
+      numero_processo: numeroFormatado,
+      erro: "Falha técnica na consulta ao DataJud/CNJ.",
+      detalhe: erro.message,
+      necessita_advogado: true
+    });
+  }
+}
+
+app.get("/", (req, res) => {
+  res.json({
+    status: "online",
+    mensagem: "API profissional de consulta processual ativa",
+    uso_get: "/consultar-processo?numero_processo=5001234-56.2023.8.26.0100",
+    uso_post: "POST /consultar-processo com { numeroProcesso: \"5001234-56.2023.8.26.0100\" }"
   });
+});
+
+app.get("/consultar-processo", async (req, res) => {
+  const numero = req.query.numeroProcesso || req.query.numero_processo;
+  return processarConsulta(numero, res);
+});
+
+app.post("/consultar-processo", async (req, res) => {
+  const numero = req.body.numeroProcesso || req.body.numero_processo;
+  return processarConsulta(numero, res);
 });
 
 app.listen(PORT, "0.0.0.0", () => {
