@@ -7,12 +7,28 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-
-const DATAJUD_API_KEY =
-  process.env.DATAJUD_API_KEY ||
-  "cDZHYzIZa0JadVREZDJCendQbXY6SkJTZnjLV9TRENyQk1RdnFKZGRQdw==";
-
 const BASE_DATAJUD = "https://api-publica.datajud.cnj.jus.br";
+
+/*
+  IMPORTANTE:
+  A chave pode vir do Railway ou, se o Railway falhar, usa fallback.
+  O código também limpa automaticamente se você colar "Authorization: APIKey ..."
+*/
+function obterDataJudApiKey() {
+  const chave =
+    process.env.DATAJUD_API_KEY ||
+    "cDZHYzIZa0JadVREZDJCendQbXY6SkJTZnjLV9TRENyQk1RdnFKZGRQdw==";
+
+  return String(chave)
+    .replace("Authorization:", "")
+    .replace("APIKey", "")
+    .replace("ApiKey", "")
+    .replace(/["']/g, "")
+    .replace(/\s/g, "")
+    .trim();
+}
+
+const DATAJUD_API_KEY = obterDataJudApiKey();
 
 const TRIBUNAIS = {
   "8.01": { sigla: "TJAC", nome: "Tribunal de Justiça do Acre", endpoint: "api_publica_tjac", consulta: "https://esaj.tjac.jus.br/cpopg/open.do" },
@@ -35,7 +51,7 @@ const TRIBUNAIS = {
   "8.18": { sigla: "TJPI", nome: "Tribunal de Justiça do Piauí", endpoint: "api_publica_tjpi", consulta: "https://pje.tjpi.jus.br/1g/ConsultaPublica/listView.seam" },
   "8.19": { sigla: "TJRJ", nome: "Tribunal de Justiça do Rio de Janeiro", endpoint: "api_publica_tjrj", consulta: "https://www3.tjrj.jus.br/consultaprocessual/" },
   "8.20": { sigla: "TJRN", nome: "Tribunal de Justiça do Rio Grande do Norte", endpoint: "api_publica_tjrn", consulta: "https://pje1g.tjrn.jus.br/pje/ConsultaPublica/listView.seam" },
-  "8.21": { sigla: "TJRS", nome: "Tribunal de Justiça do Rio Grande do Sul", endpoint: "api_publica_tjrs", consulta: "https://www.tjrs.jus.br/novo/buscas-solr/?aba=jurisprudencia" },
+  "8.21": { sigla: "TJRS", nome: "Tribunal de Justiça do Rio Grande do Sul", endpoint: "api_publica_tjrs", consulta: "https://www.tjrs.jus.br/novo/buscas-solr/" },
   "8.22": { sigla: "TJRO", nome: "Tribunal de Justiça de Rondônia", endpoint: "api_publica_tjro", consulta: "https://pjepg.tjro.jus.br/consulta/ConsultaPublica/listView.seam" },
   "8.23": { sigla: "TJRR", nome: "Tribunal de Justiça de Roraima", endpoint: "api_publica_tjrr", consulta: "https://projudi.tjrr.jus.br/projudi/" },
   "8.24": { sigla: "TJSC", nome: "Tribunal de Justiça de Santa Catarina", endpoint: "api_publica_tjsc", consulta: "https://esaj.tjsc.jus.br/cpopg/open.do" },
@@ -111,13 +127,8 @@ function montarQuery(numeroLimpo) {
   return {
     size: 1,
     query: {
-      bool: {
-        should: [
-          { term: { "numeroProcesso.keyword": numeroLimpo } },
-          { term: { numeroProcesso: numeroLimpo } },
-          { match: { numeroProcesso: numeroLimpo } }
-        ],
-        minimum_should_match: 1
+      match: {
+        numeroProcesso: numeroLimpo
       }
     }
   };
@@ -129,8 +140,8 @@ async function consultarDataJud(tribunal, numeroLimpo) {
   const response = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
-      "Authorization": `APIKey ${DATAJUD_API_KEY}`
+      Authorization: `APIKey ${DATAJUD_API_KEY}`,
+      "Content-Type": "application/json"
     },
     body: JSON.stringify(montarQuery(numeroLimpo))
   });
