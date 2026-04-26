@@ -1,16 +1,13 @@
-console.log("API KEY:", API_KEY);
 import express from "express";
 import cors from "cors";
 
-// GARANTE leitura das variáveis
-const API_KEY = process.env.DATAJUD_API_KEY || null;
-
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.DATAJUD_API_KEY;
+const DATAJUD_API_KEY = process.env.DATAJUD_API_KEY;
 const BASE_DATAJUD = "https://api-publica.datajud.cnj.jus.br";
 
 const TRIBUNAIS = {
@@ -95,7 +92,9 @@ function chaveTribunal(numeroLimpo) {
   const segmento = numeroLimpo.substring(13, 14);
   const tribunal = numeroLimpo.substring(14, 16);
 
-  if (["1", "3", "6", "7"].includes(segmento)) return `${segmento}.00`;
+  if (["1", "3", "6", "7"].includes(segmento)) {
+    return `${segmento}.00`;
+  }
 
   return `${segmento}.${tribunal}`;
 }
@@ -127,12 +126,13 @@ async function consultarDataJud(tribunal, numeroLimpo) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `APIKey ${API_KEY}`
+      Authorization: `APIKey ${DATAJUD_API_KEY}`
     },
     body: JSON.stringify(montarQuery(numeroLimpo))
   });
 
   let data = null;
+
   try {
     data = await response.json();
   } catch {
@@ -176,26 +176,50 @@ function classificarAndamento(texto = "") {
   const t = texto.toLowerCase();
 
   if (t.includes("sentença") || t.includes("julgado")) {
-    return { tipo: "decisão/sentença", risco: "alto", providencia: "Verificar teor integral da decisão e eventual prazo recursal imediatamente." };
+    return {
+      tipo: "decisão/sentença",
+      risco: "alto",
+      providencia: "Verificar teor integral da decisão e eventual prazo recursal imediatamente."
+    };
   }
 
   if (t.includes("intimação") || t.includes("intimado") || t.includes("vista")) {
-    return { tipo: "intimação/prazo", risco: "alto", providencia: "Conferir o teor da intimação e controlar o prazo processual." };
+    return {
+      tipo: "intimação/prazo",
+      risco: "alto",
+      providencia: "Conferir o teor da intimação e controlar o prazo processual."
+    };
   }
 
   if (t.includes("concluso") || t.includes("conclusão")) {
-    return { tipo: "aguardando análise do juiz", risco: "baixo", providencia: "Aguardar decisão, mantendo acompanhamento periódico." };
+    return {
+      tipo: "aguardando análise do juiz",
+      risco: "baixo",
+      providencia: "Aguardar decisão, mantendo acompanhamento periódico."
+    };
   }
 
   if (t.includes("audiência")) {
-    return { tipo: "audiência", risco: "médio", providencia: "Verificar data, horário, modalidade e necessidade de preparação da parte." };
+    return {
+      tipo: "audiência",
+      risco: "médio",
+      providencia: "Verificar data, horário, modalidade e necessidade de preparação da parte."
+    };
   }
 
   if (t.includes("perícia") || t.includes("pericial")) {
-    return { tipo: "perícia", risco: "médio", providencia: "Conferir nomeação, data da perícia e necessidade de manifestação técnica." };
+    return {
+      tipo: "perícia",
+      risco: "médio",
+      providencia: "Conferir nomeação, data da perícia e necessidade de manifestação técnica."
+    };
   }
 
-  return { tipo: "movimentação processual", risco: "médio", providencia: "Conferir o teor no sistema oficial do tribunal antes de orientar o cliente." };
+  return {
+    tipo: "movimentação processual",
+    risco: "médio",
+    providencia: "Conferir o teor no sistema oficial do tribunal antes de orientar o cliente."
+  };
 }
 
 async function processarConsulta(numeroRecebido, res) {
@@ -210,7 +234,7 @@ async function processarConsulta(numeroRecebido, res) {
     });
   }
 
-  if (!API_KEY) {
+  if (!DATAJUD_API_KEY) {
     return res.status(500).json({
       encontrado: false,
       erro: "DATAJUD_API_KEY não configurada no Railway."
