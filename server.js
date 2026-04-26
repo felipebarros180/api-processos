@@ -153,7 +153,7 @@ function classificarAndamento(texto = "") {
   
   // 1. Identifica a ORIGEM (Quem fez o movimento)
   let origem = "Não identificada (Pode ser petição interna ou documento genérico)";
-  if (t.includes("réplica") || t.includes("inicial") || t.includes("emenda") || t.includes("agravo") || t.includes("apelação") || t.includes("cumprimento de sentença")) {
+  if (t.includes("réplica") || t.includes("inicial") || t.includes("emenda") || t.includes("agravo") || t.includes("apelação") || t.includes("cumprimento de sentença") || t.includes("requerimento")) {
     origem = "AUTOR (Polo Ativo)";
   } else if (t.includes("contestação") || t.includes("contrarrazões") || t.includes("impugnação") || t.includes("defesa") || t.includes("exceção")) {
     origem = "RÉU (Polo Passivo)";
@@ -203,15 +203,20 @@ async function buscarCNJ(tribunal, numeroLimpo) {
     const p = data?.hits?.hits?.[0]?._source;
     if (!p) return { encontrado: false };
 
-    // Extrai as partes (Autor e Réu) de forma segura
+    // CORREÇÃO: Busca as partes dentro do array correto (polos) do CNJ
     let autor = "Não informado";
-    if (p.poloAtivo && p.poloAtivo.length > 0) {
-      autor = p.poloAtivo[0].pessoa?.nome || p.poloAtivo[0].nome || autor;
-    }
-    
     let reu = "Não informado";
-    if (p.poloPassivo && p.poloPassivo.length > 0) {
-      reu = p.poloPassivo[0].pessoa?.nome || p.poloPassivo[0].nome || reu;
+
+    if (p.polos && Array.isArray(p.polos)) {
+      const poloAtivo = p.polos.find(polo => polo.polo === "ATIVO" || polo.polo === "AT");
+      if (poloAtivo && poloAtivo.partes && poloAtivo.partes.length > 0) {
+        autor = poloAtivo.partes[0].pessoa?.nome || poloAtivo.partes[0].nome || "Nome oculto/Segredo";
+      }
+
+      const poloPassivo = p.polos.find(polo => polo.polo === "PASSIVO" || polo.polo === "PA");
+      if (poloPassivo && poloPassivo.partes && poloPassivo.partes.length > 0) {
+        reu = poloPassivo.partes[0].pessoa?.nome || poloPassivo.partes[0].nome || "Nome oculto/Segredo";
+      }
     }
 
     const movs = [...(p.movimentos || [])].sort((a,b) => new Date(b.dataHora || 0) - new Date(a.dataHora || 0));
@@ -248,16 +253,16 @@ async function buscarEscavador(numeroFormatado) {
     const f = p.fontes?.[0] || {};
     const partes = f.partes || [];
     
-    // Filtra autores e réus baseados em palavras-chave jurídicas comuns no Escavador
+    // CORREÇÃO: Busca inteligente das partes no Escavador
     const autor = partes.find(pt => {
       const tp = pt.tipo_participacao?.toLowerCase() || "";
-      return tp.includes("autor") || tp.includes("requerente") || tp.includes("exequente") || tp.includes("reclamante") || tp.includes("impetrante");
-    })?.nome || "Não identificado";
+      return tp.includes("autor") || tp.includes("requerente") || tp.includes("exequente") || tp.includes("reclamante") || tp.includes("impetrante") || pt.polo === "ATIVO";
+    })?.nome || "Não informado";
 
     const reu = partes.find(pt => {
       const tp = pt.tipo_participacao?.toLowerCase() || "";
-      return tp.includes("reu") || tp.includes("réu") || tp.includes("requerido") || tp.includes("executado") || tp.includes("reclamado") || tp.includes("impetrado");
-    })?.nome || "Não identificado";
+      return tp.includes("reu") || tp.includes("réu") || tp.includes("requerido") || tp.includes("executado") || tp.includes("reclamado") || tp.includes("impetrado") || pt.polo === "PASSIVO";
+    })?.nome || "Não informado";
 
     const mov = f.movimentacoes?.[0] || {};
 
