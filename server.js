@@ -3,13 +3,16 @@ import cors from "cors";
 import fetch from "node-fetch";
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+// ==========================================
+// 🏛️ DICIONÁRIO COMPLETO DE TRIBUNAIS
+// ==========================================
 const TRIBUNAIS = {
+  // === TRIBUNAIS DE JUSTIÇA ESTADUAIS (TJs) ===
   "8.01": { sigla: "TJAC", nome: "Tribunal de Justiça do Acre", endpoint: "api_publica_tjac", consulta: "https://esaj.tjac.jus.br/cpopg/open.do" },
   "8.02": { sigla: "TJAL", nome: "Tribunal de Justiça de Alagoas", endpoint: "api_publica_tjal", consulta: "https://www2.tjal.jus.br/cpopg/open.do" },
   "8.03": { sigla: "TJAP", nome: "Tribunal de Justiça do Amapá", endpoint: "api_publica_tjap", consulta: "https://tucujuris.tjap.jus.br/tucujuris/pages/consultar-processo/consultar-processo.html" },
@@ -37,12 +40,16 @@ const TRIBUNAIS = {
   "8.25": { sigla: "TJSE", nome: "Tribunal de Justiça de Sergipe", endpoint: "api_publica_tjse", consulta: "https://www.tjse.jus.br/portal/consultas/consulta-processual" },
   "8.26": { sigla: "TJSP", nome: "Tribunal de Justiça de São Paulo", endpoint: "api_publica_tjsp", consulta: "https://esaj.tjsp.jus.br/cpopg/open.do" },
   "8.27": { sigla: "TJTO", nome: "Tribunal de Justiça do Tocantins", endpoint: "api_publica_tjto", consulta: "https://eproc1.tjto.jus.br/eprocV2_prod_1grau/externo_controlador.php?acao=processo_consulta_publica" },
+
+  // === TRIBUNAIS REGIONAIS FEDERAIS (TRFs) ===
   "4.01": { sigla: "TRF1", nome: "Tribunal Regional Federal da 1ª Região", endpoint: "api_publica_trf1", consulta: "https://pje1g.trf1.jus.br/consultapublica/ConsultaPublica/listView.seam" },
   "4.02": { sigla: "TRF2", nome: "Tribunal Regional Federal da 2ª Região", endpoint: "api_publica_trf2", consulta: "https://eproc.jfrj.jus.br/eproc/externo_controlador.php?acao=processo_consulta_publica" },
   "4.03": { sigla: "TRF3", nome: "Tribunal Regional Federal da 3ª Região", endpoint: "api_publica_trf3", consulta: "https://pje1g.trf3.jus.br/pje/ConsultaPublica/listView.seam" },
   "4.04": { sigla: "TRF4", nome: "Tribunal Regional Federal da 4ª Região", endpoint: "api_publica_trf4", consulta: "https://eproc.jfrs.jus.br/eprocV2/controlador.php?acao=processo_consulta_publica" },
   "4.05": { sigla: "TRF5", nome: "Tribunal Regional Federal da 5ª Região", endpoint: "api_publica_trf5", consulta: "https://pje1g.trf5.jus.br/pje/ConsultaPublica/listView.seam" },
   "4.06": { sigla: "TRF6", nome: "Tribunal Regional Federal da 6ª Região", endpoint: "api_publica_trf6", consulta: "https://pje1g.trf6.jus.br/consultapublica/ConsultaPublica/listView.seam" },
+
+  // === TRIBUNAIS REGIONAIS DO TRABALHO (TRTs) ===
   "5.01": { sigla: "TRT1", nome: "TRT da 1ª Região", endpoint: "api_publica_trt1", consulta: "https://pje.trt1.jus.br/consultaprocessual/" },
   "5.02": { sigla: "TRT2", nome: "TRT da 2ª Região", endpoint: "api_publica_trt2", consulta: "https://pje.trt2.jus.br/consultaprocessual/" },
   "5.03": { sigla: "TRT3", nome: "TRT da 3ª Região", endpoint: "api_publica_trt3", consulta: "https://pje.trt3.jus.br/consultaprocessual/" },
@@ -67,26 +74,72 @@ const TRIBUNAIS = {
   "5.22": { sigla: "TRT22", nome: "TRT da 22ª Região", endpoint: "api_publica_trt22", consulta: "https://pje.trt22.jus.br/consultaprocessual/" },
   "5.23": { sigla: "TRT23", nome: "TRT da 23ª Região", endpoint: "api_publica_trt23", consulta: "https://pje.trt23.jus.br/consultaprocessual/" },
   "5.24": { sigla: "TRT24", nome: "TRT da 24ª Região", endpoint: "api_publica_trt24", consulta: "https://pje.trt24.jus.br/consultaprocessual/" },
-  "3.00": { sigla: "STJ", nome: "Superior Tribunal de Justiça", endpoint: "api_publica_stj", consulta: "https://processo.stj.jus.br/processo/pesquisa/" },
+
+  // === TRIBUNAIS REGIONAIS ELEITORAIS (TREs) ===
+  "6.01": { sigla: "TRE-AC", nome: "Tribunal Regional Eleitoral do Acre", endpoint: "api_publica_tre-ac", consulta: "https://www.tre-ac.jus.br/servicos-judiciais/consulta-processual" },
+  "6.02": { sigla: "TRE-AL", nome: "Tribunal Regional Eleitoral de Alagoas", endpoint: "api_publica_tre-al", consulta: "https://www.tre-al.jus.br/servicos-judiciais/consulta-processual" },
+  "6.03": { sigla: "TRE-AP", nome: "Tribunal Regional Eleitoral do Amapá", endpoint: "api_publica_tre-ap", consulta: "https://www.tre-ap.jus.br/servicos-judiciais/consulta-processual" },
+  "6.04": { sigla: "TRE-AM", nome: "Tribunal Regional Eleitoral do Amazonas", endpoint: "api_publica_tre-am", consulta: "https://www.tre-am.jus.br/servicos-judiciais/consulta-processual" },
+  "6.05": { sigla: "TRE-BA", nome: "Tribunal Regional Eleitoral da Bahia", endpoint: "api_publica_tre-ba", consulta: "https://www.tre-ba.jus.br/servicos-judiciais/consulta-processual" },
+  "6.06": { sigla: "TRE-CE", nome: "Tribunal Regional Eleitoral do Ceará", endpoint: "api_publica_tre-ce", consulta: "https://www.tre-ce.jus.br/servicos-judiciais/consulta-processual" },
+  "6.07": { sigla: "TRE-DF", nome: "Tribunal Regional Eleitoral do Distrito Federal", endpoint: "api_publica_tre-df", consulta: "https://www.tre-df.jus.br/servicos-judiciais/consulta-processual" },
+  "6.08": { sigla: "TRE-ES", nome: "Tribunal Regional Eleitoral do Espírito Santo", endpoint: "api_publica_tre-es", consulta: "https://www.tre-es.jus.br/servicos-judiciais/consulta-processual" },
+  "6.09": { sigla: "TRE-GO", nome: "Tribunal Regional Eleitoral de Goiás", endpoint: "api_publica_tre-go", consulta: "https://www.tre-go.jus.br/servicos-judiciais/consulta-processual" },
+  "6.10": { sigla: "TRE-MA", nome: "Tribunal Regional Eleitoral do Maranhão", endpoint: "api_publica_tre-ma", consulta: "https://www.tre-ma.jus.br/servicos-judiciais/consulta-processual" },
+  "6.11": { sigla: "TRE-MT", nome: "Tribunal Regional Eleitoral de Mato Grosso", endpoint: "api_publica_tre-mt", consulta: "https://www.tre-mt.jus.br/servicos-judiciais/consulta-processual" },
+  "6.12": { sigla: "TRE-MS", nome: "Tribunal Regional Eleitoral de Mato Grosso do Sul", endpoint: "api_publica_tre-ms", consulta: "https://www.tre-ms.jus.br/servicos-judiciais/consulta-processual" },
+  "6.13": { sigla: "TRE-MG", nome: "Tribunal Regional Eleitoral de Minas Gerais", endpoint: "api_publica_tre-mg", consulta: "https://www.tre-mg.jus.br/servicos-judiciais/consulta-processual" },
+  "6.14": { sigla: "TRE-PA", nome: "Tribunal Regional Eleitoral do Pará", endpoint: "api_publica_tre-pa", consulta: "https://www.tre-pa.jus.br/servicos-judiciais/consulta-processual" },
+  "6.15": { sigla: "TRE-PB", nome: "Tribunal Regional Eleitoral da Paraíba", endpoint: "api_publica_tre-pb", consulta: "https://www.tre-pb.jus.br/servicos-judiciais/consulta-processual" },
+  "6.16": { sigla: "TRE-PR", nome: "Tribunal Regional Eleitoral do Paraná", endpoint: "api_publica_tre-pr", consulta: "https://www.tre-pr.jus.br/servicos-judiciais/consulta-processual" },
+  "6.17": { sigla: "TRE-PE", nome: "Tribunal Regional Eleitoral de Pernambuco", endpoint: "api_publica_tre-pe", consulta: "https://www.tre-pe.jus.br/servicos-judiciais/consulta-processual" },
+  "6.18": { sigla: "TRE-PI", nome: "Tribunal Regional Eleitoral do Piauí", endpoint: "api_publica_tre-pi", consulta: "https://www.tre-pi.jus.br/servicos-judiciais/consulta-processual" },
+  "6.19": { sigla: "TRE-RJ", nome: "Tribunal Regional Eleitoral do Rio de Janeiro", endpoint: "api_publica_tre-rj", consulta: "https://www.tre-rj.jus.br/servicos-judiciais/consulta-processual" },
+  "6.20": { sigla: "TRE-RN", nome: "Tribunal Regional Eleitoral do Rio Grande do Norte", endpoint: "api_publica_tre-rn", consulta: "https://www.tre-rn.jus.br/servicos-judiciais/consulta-processual" },
+  "6.21": { sigla: "TRE-RS", nome: "Tribunal Regional Eleitoral do Rio Grande do Sul", endpoint: "api_publica_tre-rs", consulta: "https://www.tre-rs.jus.br/servicos-judiciais/consulta-processual" },
+  "6.22": { sigla: "TRE-RO", nome: "Tribunal Regional Eleitoral de Rondônia", endpoint: "api_publica_tre-ro", consulta: "https://www.tre-ro.jus.br/servicos-judiciais/consulta-processual" },
+  "6.23": { sigla: "TRE-RR", nome: "Tribunal Regional Eleitoral de Roraima", endpoint: "api_publica_tre-rr", consulta: "https://www.tre-rr.jus.br/servicos-judiciais/consulta-processual" },
+  "6.24": { sigla: "TRE-SC", nome: "Tribunal Regional Eleitoral de Santa Catarina", endpoint: "api_publica_tre-sc", consulta: "https://www.tre-sc.jus.br/servicos-judiciais/consulta-processual" },
+  "6.25": { sigla: "TRE-SE", nome: "Tribunal Regional Eleitoral de Sergipe", endpoint: "api_publica_tre-se", consulta: "https://www.tre-se.jus.br/servicos-judiciais/consulta-processual" },
+  "6.26": { sigla: "TRE-SP", nome: "Tribunal Regional Eleitoral de São Paulo", endpoint: "api_publica_tre-sp", consulta: "https://www.tre-sp.jus.br/servicos-judiciais/consulta-processual" },
+  "6.27": { sigla: "TRE-TO", nome: "Tribunal Regional Eleitoral do Tocantins", endpoint: "api_publica_tre-to", consulta: "https://www.tre-to.jus.br/servicos-judiciais/consulta-processual" },
+
+  // === TRIBUNAIS DE JUSTIÇA MILITAR ESTADUAIS (TJMs) ===
+  "9.13": { sigla: "TJM-MG", nome: "Tribunal de Justiça Militar de Minas Gerais", endpoint: "api_publica_tjmmg", consulta: "https://www.tjmmg.jus.br/" },
+  "9.21": { sigla: "TJM-RS", nome: "Tribunal de Justiça Militar do Rio Grande do Sul", endpoint: "api_publica_tjmrs", consulta: "https://www.tjmrs.jus.br/" },
+  "9.26": { sigla: "TJM-SP", nome: "Tribunal de Justiça Militar de São Paulo", endpoint: "api_publica_tjmsp", consulta: "https://www.tjmsp.jus.br/" },
+
+  // === TRIBUNAIS SUPERIORES E CONSELHOS ===
   "1.00": { sigla: "STF", nome: "Supremo Tribunal Federal", endpoint: "api_publica_stf", consulta: "https://portal.stf.jus.br/processos/listarProcessos.asp" },
+  "2.00": { sigla: "CNJ", nome: "Conselho Nacional de Justiça", endpoint: "api_publica_cnj", consulta: "https://www.cnj.jus.br/pjecnj/ConsultaPublica/listView.seam" },
+  "3.00": { sigla: "STJ", nome: "Superior Tribunal de Justiça", endpoint: "api_publica_stj", consulta: "https://processo.stj.jus.br/processo/pesquisa/" },
+  "4.00": { sigla: "CJF", nome: "Conselho da Justiça Federal", endpoint: "api_publica_cjf", consulta: "https://www.cjf.jus.br/cjf/processo/consulta-processual" },
+  "5.00": { sigla: "TST", nome: "Tribunal Superior do Trabalho", endpoint: "api_publica_tst", consulta: "https://consultaprocessual.tst.jus.br/" },
   "6.00": { sigla: "TSE", nome: "Tribunal Superior Eleitoral", endpoint: "api_publica_tse", consulta: "https://consultaunificadapje.tse.jus.br/" },
   "7.00": { sigla: "STM", nome: "Superior Tribunal Militar", endpoint: "api_publica_stm", consulta: "https://eproc2g.stm.jus.br/eproc_2g_prod/externo_controlador.php?acao=processo_consulta_publica" }
 };
+
+// ==========================================
+// 🛠️ FUNÇÕES AUXILIARES
+// ==========================================
 
 function limparNumero(numero) {
   return String(numero || "").replace(/\D/g, "");
 }
 
-function formatarNumeroCNJ(numeroLimpo) {
-  if (numeroLimpo.length !== 20) return numeroLimpo;
-  return `${numeroLimpo.slice(0, 7)}-${numeroLimpo.slice(7, 9)}.${numeroLimpo.slice(9, 13)}.${numeroLimpo.slice(13, 14)}.${numeroLimpo.slice(14, 16)}.${numeroLimpo.slice(16, 20)}`;
+function formatarNumeroCNJ(n) {
+  if (n.length !== 20) return n;
+  return `${n.slice(0, 7)}-${n.slice(7, 9)}.${n.slice(9, 13)}.${n.slice(13, 14)}.${n.slice(14, 16)}.${n.slice(16, 20)}`;
 }
 
 function chaveTribunal(numeroLimpo) {
   if (numeroLimpo.length !== 20) return null;
   const segmento = numeroLimpo.substring(13, 14);
   const tribunal = numeroLimpo.substring(14, 16);
-  if (["1", "3", "6", "7"].includes(segmento)) return `${segmento}.00`;
+  // Segmentos com finalização genérica .00 para superiores
+  if (["1", "2", "3", "4", "5", "6", "7"].includes(segmento) && tribunal === "00") {
+     return `${segmento}.00`;
+  }
   return `${segmento}.${tribunal}`;
 }
 
@@ -94,35 +147,51 @@ function linkJusbrasil(numeroFormatado) {
   return `https://www.jusbrasil.com.br/processos/busca?q=${encodeURIComponent(numeroFormatado)}`;
 }
 
+// 🧠 INTELIGÊNCIA: CLASSIFICAÇÃO DA MOVIMENTAÇÃO
 function classificarAndamento(texto = "") {
   const t = texto.toLowerCase();
-  let origem = "Não especificada (necessita leitura do PDF)";
   
-  if (t.includes("réplica") || t.includes("inicial") || t.includes("emenda") || t.includes("cumprimento de sentença") || t.includes("agravo de instrumento")) {
-    origem = "Provavelmente do Autor (Polo Ativo)";
-  } else if (t.includes("contestação") || t.includes("contrarrazões") || t.includes("impugnação ao cumprimento") || t.includes("exceção")) {
-    origem = "Provavelmente do Réu (Polo Passivo)";
-  } else if (t.includes("sentença") || t.includes("decisão") || t.includes("despacho") || t.includes("intimação") || t.includes("concluso") || t.includes("audiência") || t.includes("certidão") || t.includes("mandado") || t.includes("expedição") || t.includes("juntada de ar")) {
-    origem = "Juiz / Cartório do Tribunal";
+  // 1. Identifica a ORIGEM (Quem fez o movimento)
+  let origem = "Não identificada (Pode ser petição interna ou documento genérico)";
+  if (t.includes("réplica") || t.includes("inicial") || t.includes("emenda") || t.includes("agravo") || t.includes("apelação") || t.includes("cumprimento de sentença")) {
+    origem = "AUTOR (Polo Ativo)";
+  } else if (t.includes("contestação") || t.includes("contrarrazões") || t.includes("impugnação") || t.includes("defesa") || t.includes("exceção")) {
+    origem = "RÉU (Polo Passivo)";
+  } else if (t.includes("sentença") || t.includes("decisão") || t.includes("despacho") || t.includes("intimação") || t.includes("concluso") || t.includes("pauta") || t.includes("expedição") || t.includes("certidão") || t.includes("citação") || t.includes("audiência")) {
+    origem = "TRIBUNAL (Juiz / Cartório)";
   }
 
-  if (t.includes("sentença") || t.includes("julgado")) return { tipo: "decisão/sentença", risco: "alto", providencia: "Verificar teor integral e eventual prazo.", origem_provavel: origem };
-  if (t.includes("intimação") || t.includes("intimado") || t.includes("vista")) return { tipo: "intimação/prazo", risco: "alto", providencia: "Conferir intimação e controlar prazo.", origem_provavel: origem };
-  if (t.includes("concluso") || t.includes("conclusão")) return { tipo: "aguardando juiz", risco: "baixo", providencia: "Aguardar decisão do juiz.", origem_provavel: origem };
-  if (t.includes("audiência")) return { tipo: "audiência", risco: "médio", providencia: "Verificar data e preparar o cliente.", origem_provavel: origem };
-  if (t.includes("perícia") || t.includes("pericial")) return { tipo: "perícia", risco: "médio", providencia: "Conferir data e necessidade de assistente técnico.", origem_provavel: origem };
+  // 2. Identifica o TIPO do movimento e PROVIDÊNCIA
+  let tipo = "movimentação processual comum";
+  let providencia = "Acompanhamento de rotina.";
 
-  return { tipo: "movimentação processual", risco: "médio", providencia: "Conferir teor no sistema oficial.", origem_provavel: origem };
+  if (t.includes("sentença") || t.includes("julgado")) {
+    tipo = "decisão/sentença";
+    providencia = "Verificar teor integral da decisão e analisar prazo recursal.";
+  } else if (t.includes("intimação") || t.includes("prazo") || t.includes("vista")) {
+    tipo = "intimação ou abertura de prazo";
+    providencia = "Atenção ao prazo processual! Consultar sistema do tribunal urgente.";
+  } else if (t.includes("concluso")) {
+    tipo = "processo aguardando juiz";
+    providencia = "Aguardar despacho ou sentença do juiz.";
+  } else if (t.includes("audiência")) {
+    tipo = "marcação de audiência";
+    providencia = "Verificar data/horário e orientar o cliente.";
+  }
+
+  return { tipo, origem_movimentacao: origem, providencia };
 }
 
 // ==========================================
-// 🚀 BLOCO DE BUSCAS (MOTOR DE CRUZAMENTO)
+// 🚀 MOTORES DE BUSCA
 // ==========================================
 
+// --- MOTOR 1: BASE DATAJUD (CNJ) ---
 async function buscarCNJ(tribunal, numeroLimpo) {
   try {
     const token = process.env.DATAJUD_API_KEY || "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==";
     const url = `https://api-publica.datajud.cnj.jus.br/${tribunal.endpoint}/_search`;
+    
     const response = await fetch(url, {
       method: "POST",
       headers: { "Authorization": `APIKey ${token}`, "Content-Type": "application/json" },
@@ -131,134 +200,174 @@ async function buscarCNJ(tribunal, numeroLimpo) {
 
     if (!response.ok) return { encontrado: false };
     const data = await response.json();
-    const processo = data?.hits?.hits?.[0]?._source;
-    if (!processo) return { encontrado: false };
+    const p = data?.hits?.hits?.[0]?._source;
+    if (!p) return { encontrado: false };
 
-    const movimentos = [...(processo.movimentos || [])].sort((a, b) => new Date(b.dataHora || b.data || 0) - new Date(a.dataHora || a.data || 0));
-    const ultimo = movimentos[0] || {};
+    // Extrai as partes (Autor e Réu) de forma segura
+    let autor = "Não informado";
+    if (p.poloAtivo && p.poloAtivo.length > 0) {
+      autor = p.poloAtivo[0].pessoa?.nome || p.poloAtivo[0].nome || autor;
+    }
+    
+    let reu = "Não informado";
+    if (p.poloPassivo && p.poloPassivo.length > 0) {
+      reu = p.poloPassivo[0].pessoa?.nome || p.poloPassivo[0].nome || reu;
+    }
 
+    const movs = [...(p.movimentos || [])].sort((a,b) => new Date(b.dataHora || 0) - new Date(a.dataHora || 0));
+    
     return {
       encontrado: true,
-      fonte: "CNJ (DataJud)",
-      classe: processo.classe?.nome || null,
-      data_ajuizamento: processo.dataAjuizamento || null,
-      ultimo_andamento: ultimo.nome || ultimo.descricao || "Movimentação registrada.",
-      data_andamento_raw: ultimo.dataHora || ultimo.data || "1970-01-01T00:00:00.000Z"
+      fonte: "DataJud / CNJ",
+      autor: autor,
+      reu: reu,
+      ultimo_andamento: movs[0]?.nome || movs[0]?.descricao || "Movimentação registrada sem descrição.",
+      data_movimentacao_raw: movs[0]?.dataHora || null
     };
-  } catch (e) {
-    return { encontrado: false };
+  } catch (e) { 
+    return { encontrado: false }; 
   }
 }
 
+// --- MOTOR 2: BASE ESCAVADOR ---
 async function buscarEscavador(numeroFormatado) {
   try {
     const token = process.env.ESCAVADOR_API_KEY;
     if (!token) return { encontrado: false };
 
-    const url = `https://api.escavador.com/api/v2/processos/numero_cnj/${numeroFormatado}`;
-    const response = await fetch(url, {
+    const response = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numeroFormatado}`, {
       method: "GET",
       headers: { "Authorization": `Bearer ${token}`, "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/json" }
     });
 
     if (!response.ok) return { encontrado: false };
     const data = await response.json();
-    const processo = data?.items?.[0];
-    if (!processo) return { encontrado: false };
+    const p = data?.items?.[0];
+    if (!p) return { encontrado: false };
 
-    const fontePrincipal = processo.fontes?.[0] || {}; 
-    const ultimo = fontePrincipal.movimentacoes?.[0] || {};
+    const f = p.fontes?.[0] || {};
+    const partes = f.partes || [];
+    
+    // Filtra autores e réus baseados em palavras-chave jurídicas comuns no Escavador
+    const autor = partes.find(pt => {
+      const tp = pt.tipo_participacao?.toLowerCase() || "";
+      return tp.includes("autor") || tp.includes("requerente") || tp.includes("exequente") || tp.includes("reclamante") || tp.includes("impetrante");
+    })?.nome || "Não identificado";
+
+    const reu = partes.find(pt => {
+      const tp = pt.tipo_participacao?.toLowerCase() || "";
+      return tp.includes("reu") || tp.includes("réu") || tp.includes("requerido") || tp.includes("executado") || tp.includes("reclamado") || tp.includes("impetrado");
+    })?.nome || "Não identificado";
+
+    const mov = f.movimentacoes?.[0] || {};
 
     return {
       encontrado: true,
-      fonte: "Escavador",
-      classe: fontePrincipal.capa?.classe || null,
-      data_ajuizamento: fontePrincipal.data_inicio || null,
-      ultimo_andamento: ultimo.conteudo || ultimo.tipo || "Movimentação registrada.",
-      data_andamento_raw: ultimo.data || "1970-01-01T00:00:00.000Z"
+      fonte: "API Escavador",
+      autor: autor,
+      reu: reu,
+      ultimo_andamento: mov.conteudo || mov.tipo || "Sem descrição processual.",
+      data_movimentacao_raw: mov.data || null
     };
-  } catch (e) {
-    return { encontrado: false };
+  } catch (e) { 
+    return { encontrado: false }; 
   }
 }
 
+// --- MOTOR 3: JUSBRASIL (Placeholder para o futuro) ---
 async function buscarJusbrasil(numeroFormatado) {
-  // O JusBrasil requer credenciais Enterprise B2B e não tem API pública REST padrão.
-  // Função pronta para plugar o serviço deles no futuro.
+  // Acesso direto ao Jusbrasil exige plano Enterprise. Preparado para plugar depois.
   return { encontrado: false }; 
 }
 
 // ==========================================
-// 🔄 PROCESSAMENTO FINAL
+// 🔄 PROCESSADOR PRINCIPAL E ROTAS
 // ==========================================
 
 async function processarConsulta(numeroRecebido, res) {
-  const numeroLimpo = limparNumero(numeroRecebido);
-  const numeroFormatado = formatarNumeroCNJ(numeroLimpo);
+  const numLimpo = limparNumero(numeroRecebido);
+  const numFmt = formatarNumeroCNJ(numLimpo);
 
-  if (!numeroRecebido || numeroLimpo.length !== 20) {
-    return res.status(400).json({ encontrado: false, erro: "Número inválido." });
+  if (!numeroRecebido || numLimpo.length !== 20) {
+    return res.status(400).json({ encontrado: false, erro: "Número de processo inválido. Padrão exigido: 20 dígitos CNJ." });
   }
 
-  const chave = chaveTribunal(numeroLimpo);
-  const tribunal = TRIBUNAIS[chave] || { nome: "Tribunal não identificado", sigla: "", consulta: "" };
+  const chave = chaveTribunal(numLimpo);
+  const tribunal = TRIBUNAIS[chave];
 
-  try {
-    // ⚡ A MÁGICA ACONTECE AQUI: Dispara todas as buscas simultaneamente para economizar tempo
-    const [resCNJ, resEscavador, resJusbrasil] = await Promise.all([
-      buscarCNJ(tribunal, numeroLimpo),
-      buscarEscavador(numeroFormatado),
-      buscarJusbrasil(numeroFormatado)
-    ]);
-
-    let resultados = [];
-    if (resCNJ.encontrado) resultados.push(resCNJ);
-    if (resEscavador.encontrado) resultados.push(resEscavador);
-    if (resJusbrasil.encontrado) resultados.push(resJusbrasil);
-
-    if (resultados.length === 0) {
-      return res.json({
-        encontrado: false,
-        numero_processo: numeroFormatado,
-        mensagem: "Processo não localizado nas bases consultadas (CNJ, Escavador).",
-        necessita_advogado: true
-      });
-    }
-
-    // 🏆 Pega a base de dados que tiver a data de movimentação MAIS NOVA
-    resultados.sort((a, b) => new Date(b.data_andamento_raw) - new Date(a.data_andamento_raw));
-    const vencedor = resultados[0];
-    
-    const classificacao = classificarAndamento(vencedor.ultimo_andamento);
-    const basesUtilizadas = resultados.map(r => r.fonte).join(" e ");
-
-    return res.json({
-      encontrado: true,
-      numero_processo: numeroFormatado,
-      tribunal_identificado: tribunal.nome,
-      fonte_primaria: vencedor.fonte,
-      fontes_cruzadas: basesUtilizadas,
-      classe: vencedor.classe,
-      data_ultimo_andamento: vencedor.data_andamento_raw,
-      ultimo_andamento: vencedor.ultimo_andamento,
-      classificacao_andamento: classificacao,
-      resumo_formal: `O processo foi localizado. Informação cruzada via ${basesUtilizadas}. Último andamento: ${vencedor.ultimo_andamento}.`,
-      explicacao_simples: `Em linguagem simples, o processo teve movimentação como "${vencedor.ultimo_andamento}". Classificação: ${classificacao.tipo}.`,
-      providencia_recomendada: classificacao.providencia,
-      links_de_conferencia: {
-        tribunal_oficial: tribunal.consulta,
-        jusbrasil: linkJusbrasil(numeroFormatado)
-      },
-      necessita_advogado: true
+  if (!tribunal) {
+    return res.json({ 
+      encontrado: false, 
+      mensagem: "O código do tribunal no número informado não foi identificado ou ainda não está mapeado.",
+      links_de_conferencia: { jusbrasil: linkJusbrasil(numFmt) }
     });
-
-  } catch (erro) {
-    return res.status(500).json({ encontrado: false, erro: "Falha técnica no motor de busca." });
   }
+
+  // Aciona as buscas simultaneamente para entregar o resultado muito mais rápido
+  const [resCNJ, resEscavador, resJusbrasil] = await Promise.all([
+    buscarCNJ(tribunal, numLimpo),
+    buscarEscavador(numFmt),
+    buscarJusbrasil(numFmt)
+  ]);
+  
+  let resultados = [];
+  if (resCNJ.encontrado) resultados.push(resCNJ);
+  if (resEscavador.encontrado) resultados.push(resEscavador);
+  if (resJusbrasil.encontrado) resultados.push(resJusbrasil);
+
+  if (resultados.length === 0) {
+    return res.json({ 
+      encontrado: false, 
+      numero_processo: numFmt,
+      tribunal: tribunal.nome,
+      mensagem: "Processo não localizado nas bases públicas (CNJ e Escavador). Pode estar em segredo de justiça ou não indexado.",
+      links_de_conferencia: { tribunal_oficial: tribunal.consulta, jusbrasil: linkJusbrasil(numFmt) }
+    });
+  }
+
+  // Ordena os resultados para sempre pegar a movimentação mais recente (data maior)
+  resultados.sort((a, b) => new Date(b.data_movimentacao_raw || 0) - new Date(a.data_movimentacao_raw || 0));
+  const vencedor = resultados[0];
+  
+  const classe = classificarAndamento(vencedor.ultimo_andamento);
+
+  return res.json({
+    encontrado: true,
+    numero_processo: numFmt,
+    tribunal: tribunal.nome,
+    base_de_dados_utilizada: vencedor.fonte,
+    partes: {
+      autor: vencedor.autor,
+      reu: vencedor.reu
+    },
+    dados_da_movimentacao: {
+      data_registro: vencedor.data_movimentacao_raw,
+      tipo_da_movimentacao: classe.tipo,
+      texto_do_andamento: vencedor.ultimo_andamento,
+      quem_fez_o_movimento: classe.origem_movimentacao
+    },
+    resumo_explicativo: `Trata-se de um processo entre ${vencedor.autor} (Autor) e ${vencedor.reu} (Réu). A última atualização ocorreu na data de ${vencedor.data_movimentacao_raw || "desconhecida"}, caracterizada como um(a) ${classe.tipo}, e foi originada por: ${classe.origem_movimentacao}.`,
+    providencia_recomendada: classe.providencia,
+    links_de_conferencia: {
+      tribunal_oficial: tribunal.consulta,
+      jusbrasil: linkJusbrasil(numFmt)
+    }
+  });
 }
 
-app.get("/", (req, res) => res.json({ status: "online", mensagem: "Motor de Cruzamento Processual Ativo" }));
-app.get("/consultar-processo", (req, res) => processarConsulta(req.query.numeroProcesso || req.query.numero_processo, res));
-app.post("/consultar-processo", (req, res) => processarConsulta(req.body.numeroProcesso || req.body.numero_processo, res));
+// Rotas do Express
+app.get("/", (req, res) => {
+  res.json({ status: "online", mensagem: "Motor de Inteligência e Cruzamento Processual Ativo" });
+});
 
-app.listen(PORT, "0.0.0.0", () => console.log(`Servidor rodando na porta ${PORT}`));
+app.get("/consultar-processo", (req, res) => {
+  return processarConsulta(req.query.numeroProcesso || req.query.numero_processo, res);
+});
+
+app.post("/consultar-processo", (req, res) => {
+  return processarConsulta(req.body.numeroProcesso || req.body.numero_processo, res);
+});
+
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Servidor de processos rodando perfeitamente na porta ${PORT}`);
+});
