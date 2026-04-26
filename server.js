@@ -7,9 +7,11 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+
 const DATAJUD_API_KEY =
   process.env.DATAJUD_API_KEY ||
   "cDZHYzIZa0JadVREZDJCendQbXY6SkJTZnjLV9TRENyQk1RdnFKZGRQdw==";
+
 const BASE_DATAJUD = "https://api-publica.datajud.cnj.jus.br";
 
 const TRIBUNAIS = {
@@ -128,7 +130,7 @@ async function consultarDataJud(tribunal, numeroLimpo) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `APIKey ${DATAJUD_API_KEY}`
+      "Authorization": `APIKey ${DATAJUD_API_KEY}`
     },
     body: JSON.stringify(montarQuery(numeroLimpo))
   });
@@ -233,13 +235,6 @@ async function processarConsulta(numeroRecebido, res) {
       encontrado: false,
       erro: "Número de processo inválido. Informe número no padrão CNJ.",
       exemplo: "8005761-72.2025.8.05.0004"
-    });
-  }
-
-  if (!DATAJUD_API_KEY) {
-    return res.status(500).json({
-      encontrado: false,
-      erro: "DATAJUD_API_KEY não configurada no Railway."
     });
   }
 
