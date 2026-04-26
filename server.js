@@ -263,13 +263,6 @@ app.post("/consultar-processo", async (req, res) => {
     tentativas.push(tribunalPrincipal);
   }
 
-  const endpointsExtras = Object.values(TRIBUNAIS)
-    .filter(t => !tribunalPrincipal || t.endpoint !== tribunalPrincipal.endpoint);
-
-  for (const t of endpointsExtras) {
-    tentativas.push(t);
-  }
-
   let processo = null;
   let tribunalEncontrado = null;
   let statusDataJud = [];
