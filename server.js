@@ -4,6 +4,7 @@ import cors from "cors";
 
 // GARANTE leitura das variáveis
 const API_KEY = process.env.DATAJUD_API_KEY || null;
+
 const app = express();
 app.use(cors());
 app.use(express.json());
