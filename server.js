@@ -54,7 +54,9 @@ function autenticar(req, res, next) {
 // =============================================================
 // CACHE EM MEMÓRIA (chave = número CNJ)
 // Evita custo repetido de consulta ao CNJ/Escavador/JusBrasil
+// Tem limite de tamanho para não crescer infinitamente em produção.
 // =============================================================
+const CACHE_MAX_ENTRADAS = parseInt(process.env.CACHE_MAX_ENTRADAS || "1000", 10);
 const cache = new Map();
 
 function cacheGet(numero) {
@@ -64,10 +66,18 @@ function cacheGet(numero) {
     cache.delete(numero);
     return null;
   }
+  // LRU: re-insere para mover para o final (Map preserva ordem de inserção)
+  cache.delete(numero);
+  cache.set(numero, item);
   return item.data;
 }
 
 function cacheSet(numero, data) {
+  // Se atingiu o limite, remove a entrada mais antiga (primeira do Map)
+  if (cache.size >= CACHE_MAX_ENTRADAS) {
+    const primeiraChave = cache.keys().next().value;
+    if (primeiraChave !== undefined) cache.delete(primeiraChave);
+  }
   cache.set(numero, { time: Date.now(), data });
 }
 
@@ -85,6 +95,39 @@ function logConsulta({ numero, ip, fontes, ok, erro }) {
     erro: erro || null
   };
   console.log("[CONSULTA]", JSON.stringify(entry));
+}
+
+// =============================================================
+// FETCH COM TIMEOUT + ERRO PADRONIZADO
+// Evita que uma API externa lenta trave o endpoint.
+// Sempre retorna { ok, status, json, erro } com códigos uniformes
+// para o GPT entender qualquer falha de forma consistente.
+// =============================================================
+const FETCH_TIMEOUT_MS = parseInt(process.env.FETCH_TIMEOUT_MS || "8000", 10);
+
+async function fetchComTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const tId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        erro: "FALHA_CONSULTA_EXTERNA",
+        detalhe: `HTTP ${res.status}`
+      };
+    }
+    const json = await res.json();
+    return { ok: true, status: res.status, json };
+  } catch (e) {
+    if (e.name === "AbortError") {
+      return { ok: false, erro: "TIMEOUT_CONSULTA_EXTERNA", detalhe: `Timeout após ${timeoutMs}ms` };
+    }
+    return { ok: false, erro: "FALHA_CONSULTA_EXTERNA", detalhe: e.message };
+  } finally {
+    clearTimeout(tId);
+  }
 }
 
 // =============================================================
@@ -586,15 +629,15 @@ async function buscarCNJ(trib, num) {
     if (!DATAJUD_API_KEY) {
       return { ok: false, erro: "API CNJ Datajud não configurada (DATAJUD_API_KEY ausente no .env)" };
     }
-    const res = await fetch(`https://api-publica.datajud.cnj.jus.br/${trib.endpoint}/_search`, {
+    const r = await fetchComTimeout(`https://api-publica.datajud.cnj.jus.br/${trib.endpoint}/_search`, {
       method: "POST",
       headers: { "Authorization": `APIKey ${DATAJUD_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ size: 1, query: { match: { numeroProcesso: num } } })
     });
 
-    if (!res.ok) return { ok: false, erro: `CNJ retornou status ${res.status}` };
+    if (!r.ok) return { ok: false, erro: `${r.erro}${r.detalhe ? " — " + r.detalhe : ""} (CNJ Datajud)` };
 
-    const d = await res.json();
+    const d = r.json;
     const p = d?.hits?.hits?.[0]?._source;
     if (!p) return { ok: false, erro: "Processo não encontrado na base do CNJ" };
 
@@ -640,13 +683,13 @@ async function buscarEscCapa(numFmt) {
   try {
     if (!ESCAVADOR_API_KEY) return { ok: false, erro: "API Escavador não configurada (ESCAVADOR_API_KEY ausente no .env)" };
 
-    const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}`, {
+    const r = await fetchComTimeout(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}`, {
       headers: { "Authorization": `Bearer ${ESCAVADOR_API_KEY}`, "X-Requested-With": "XMLHttpRequest" }
     });
 
-    if (!res.ok) return { ok: false, erro: `Escavador (capa) retornou status ${res.status}` };
+    if (!r.ok) return { ok: false, erro: `${r.erro}${r.detalhe ? " — " + r.detalhe : ""} (Escavador capa)` };
 
-    const d = await res.json();
+    const d = r.json;
     const p = d?.items?.[0] || d; // resposta pode vir solta também
     if (!p || (!p.numero_cnj && !p.fontes)) return { ok: false, erro: "Processo não encontrado no Escavador" };
 
@@ -673,13 +716,13 @@ async function buscarEscMovs(numFmt, limite = 30) {
   try {
     if (!ESCAVADOR_API_KEY) return { ok: false, erro: "API Escavador não configurada (ESCAVADOR_API_KEY ausente no .env)" };
 
-    const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}/movimentacoes`, {
+    const r = await fetchComTimeout(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}/movimentacoes`, {
       headers: { "Authorization": `Bearer ${ESCAVADOR_API_KEY}`, "X-Requested-With": "XMLHttpRequest" }
     });
 
-    if (!res.ok) return { ok: false, erro: `Escavador (movs) retornou status ${res.status}` };
+    if (!r.ok) return { ok: false, erro: `${r.erro}${r.detalhe ? " — " + r.detalhe : ""} (Escavador movs)` };
 
-    const d = await res.json();
+    const d = r.json;
     const items = d?.items || d?.data || [];
     if (!items.length) return { ok: false, erro: "Sem movimentações no Escavador" };
 
@@ -707,13 +750,13 @@ async function buscarJusBrasil(numFmt) {
     if (!JUSBRASIL_API_TOKEN) return { ok: false, erro: "API JusBrasil não configurada (JUSBRASIL_API_TOKEN ausente no .env)" };
 
     // Endpoint comercial - estrutura padrão da API Jusbrasil Soluções
-    const res = await fetch(`https://api.jusbrasil.com.br/v2/processos/numero_cnj/${numFmt}`, {
+    const r = await fetchComTimeout(`https://api.jusbrasil.com.br/v2/processos/numero_cnj/${numFmt}`, {
       headers: { "Authorization": `Bearer ${JUSBRASIL_API_TOKEN}`, "Content-Type": "application/json" }
     });
 
-    if (!res.ok) return { ok: false, erro: `JusBrasil retornou status ${res.status}` };
+    if (!r.ok) return { ok: false, erro: `${r.erro}${r.detalhe ? " — " + r.detalhe : ""} (JusBrasil)` };
 
-    const d = await res.json();
+    const d = r.json;
     const p = d?.processo || d;
     if (!p) return { ok: false, erro: "Sem dados no JusBrasil" };
 
@@ -739,31 +782,85 @@ async function buscarJusBrasil(numFmt) {
 
 // =============================================================
 // FUSÃO INTELIGENTE: combina os movimentos do CNJ com o conteúdo
-// descritivo do Escavador/JusBrasil pareando por DATA mais próxima
+// descritivo do Escavador/JusBrasil pareando por DATA + SIMILARIDADE
+// TEXTUAL. Quando há vários atos no mesmo dia, escolhe o melhor par
+// e MARCA o item como consumido para não casar duas vezes.
 // =============================================================
+
+// Calcula afinidade simples entre nome TPU (ex.: "Sentença") e texto do Escavador
+// (ex.: "Sentenciado em audiência..."): conta tokens compartilhados normalizados.
+function _normalizar(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter(t => t.length > 2);
+}
+function _afinidade(a, b) {
+  const ta = new Set(_normalizar(a));
+  const tb = new Set(_normalizar(b));
+  if (!ta.size || !tb.size) return 0;
+  let intersec = 0;
+  for (const t of ta) if (tb.has(t)) intersec++;
+  return intersec / Math.min(ta.size, tb.size);
+}
+
 function fundirMovimentos({ movsCNJ = [], movsEsc = [], andJB = [] }) {
-  // O CNJ é a base (códigos TPU oficiais). Vou enriquecer com texto do Escavador/JusBrasil.
+  const TOLERANCIA_MS = 24 * 60 * 60 * 1000;
+  const escConsumidos = new Set();
+  const jbConsumidos = new Set();
+
+  // Procura o MELHOR par dentro da janela de 24h:
+  //  - mesma data ganha prioridade
+  //  - empate em data: maior afinidade textual com o nome TPU
+  //  - índice consumido nunca é repetido
+  function escolherMelhor(lista, consumidos, dataAlvoMs, nomeAlvo, getTexto) {
+    let melhor = null;
+    let melhorScore = -1;
+    for (let i = 0; i < lista.length; i++) {
+      if (consumidos.has(i)) continue;
+      const it = lista[i];
+      if (!it.data_iso) continue;
+      const tIso = new Date(it.data_iso).getTime();
+      if (Number.isNaN(tIso)) continue;
+      const diff = Math.abs(tIso - dataAlvoMs);
+      if (diff > TOLERANCIA_MS) continue;
+
+      const proximidade = 1 - (diff / TOLERANCIA_MS);              // 0..1 (1 = mesmo instante)
+      const afinidade = _afinidade(nomeAlvo, getTexto(it));        // 0..1
+      const score = proximidade * 0.6 + afinidade * 0.4;
+
+      if (score > melhorScore) {
+        melhorScore = score;
+        melhor = { idx: i, item: it };
+      }
+    }
+    return melhor;
+  }
+
   return movsCNJ.map(mc => {
     const dataAlvo = mc.data_iso ? new Date(mc.data_iso).getTime() : null;
+    const nomeAlvo = [mc.nome, ...(mc.complementos || [])].filter(Boolean).join(" ");
 
-    // Encontra movimento do Escavador na mesma data (tolerância: 24h)
-    const matchEsc = dataAlvo
-      ? movsEsc.find(me => {
-          if (!me.data_iso) return false;
-          const diff = Math.abs(new Date(me.data_iso).getTime() - dataAlvo);
-          return diff <= 24 * 60 * 60 * 1000;
-        })
-      : null;
+    let matchEsc = null;
+    let matchJB = null;
 
-    const matchJB = dataAlvo
-      ? andJB.find(aj => {
-          if (!aj.data_iso) return false;
-          const diff = Math.abs(new Date(aj.data_iso).getTime() - dataAlvo);
-          return diff <= 24 * 60 * 60 * 1000;
-        })
-      : null;
+    if (dataAlvo !== null && !Number.isNaN(dataAlvo)) {
+      const escolhaEsc = escolherMelhor(movsEsc, escConsumidos, dataAlvo, nomeAlvo, x => x.conteudo || x.tipo || "");
+      if (escolhaEsc) {
+        matchEsc = escolhaEsc.item;
+        escConsumidos.add(escolhaEsc.idx);
+      }
+      const escolhaJB = escolherMelhor(andJB, jbConsumidos, dataAlvo, nomeAlvo, x => x.descricao || "");
+      if (escolhaJB) {
+        matchJB = escolhaJB.item;
+        jbConsumidos.add(escolhaJB.idx);
+      }
+    }
 
-    // Texto descritivo: prioriza Escavador (mais rico), depois JusBrasil, depois nome TPU
+    // Texto descritivo: prioriza Escavador SEMPRE que existir (mais rico),
+    // depois JusBrasil, depois nome TPU + complementos
     const conteudoDescritivo =
       matchEsc?.conteudo ||
       matchJB?.descricao ||
@@ -1533,7 +1630,9 @@ app.get("/health", (req, res) => res.json({
     rate_limit_janela_ms: RATE_LIMIT_WINDOW_MS,
     cache_ativo: true,
     cache_ttl_ms: CACHE_TTL_MS,
-    cache_entradas_atuais: cache.size
+    cache_max_entradas: CACHE_MAX_ENTRADAS,
+    cache_entradas_atuais: cache.size,
+    fetch_timeout_ms: FETCH_TIMEOUT_MS
   },
   apis_configuradas: {
     cnj_datajud: !!DATAJUD_API_KEY,
