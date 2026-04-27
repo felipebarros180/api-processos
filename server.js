@@ -1,17 +1,91 @@
 import express from "express";
 import cors from "cors";
 import fetch from "node-fetch";
+import rateLimit from "express-rate-limit";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
+// =============================================================
+// CONFIGURAÇÃO POR VARIÁVEIS DE AMBIENTE (.env)
+// IMPORTANTE: Nunca commitar tokens no código. Use .env no servidor.
+// =============================================================
 const PORT = process.env.PORT || 3000;
+const ESCAVADOR_API_KEY = process.env.ESCAVADOR_API_KEY;
+const DATAJUD_API_KEY = process.env.DATAJUD_API_KEY;
+const JUSBRASIL_API_TOKEN = process.env.JUSBRASIL_API_TOKEN;
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY;
+const CACHE_TTL_MS = parseInt(process.env.CACHE_TTL_MS || "600000", 10);       // 10 min
+const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || "60000", 10); // 1 min
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || "60", 10);       // 60 req/min
 
 // =============================================================
-// TOKEN VIP DO ESCAVADOR (Injetado Diretamente)
+// SEGURANÇA: rate limit global
 // =============================================================
-const TOKEN_ESCAVADOR_VIP = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiZDVmOTRkYWQ3ODI2NzU3YjEzMjEzOTllY2ZmZWNhMDM2MjA4MWM5OWYwNDNmNTk3MDYxNWYwOTQ4N2Q3NjZlYmQ0ZDE3ZDFjNTk1OGYyZDMiLCJpYXQiOjE3NzczMDE2MTEuMDE5NjE0LCJuYmYiOjE3NzczMDE2MTEuMDE5NjE1LCJleHAiOjIwOTI5MjA4MTEuMDE4MDU3LCJzdWIiOiIzNTEzNTEyIiwic2NvcGVzIjpbImFjZXNzYXJfYXBpX3BhZ2EiLCJhY2Vzc2FyX2FwaV9wbGF5Z3JvdW5kIl19.NIdCHkyEuX08oJHxuGqggotniiQfxwhSs1-H2tl-2N6rDGN1bQ55Ft30v6rXi10EMkFQfodU_DZ3lyZR4Eap0Z8PjNe4wPp58ZU5WBHLWM9rDnsXR430c_LxPkjU10dJLuCB2VC9gKNxh9Z8HcLldBmnTwbzA12_lmiVHAWju7ZbfdBfjjJVllaqBy8yllgpqVWcpBvpFtnTl8r17I1edem1w4ToovGfyEu6GSLlgTAuYanTTXCqxxd9PU2hLLU-qAYIF7W8sfcWbCKx2FM5PEEnyz0RVb8GbRH0GLcFAXFIwnFMFnS2iDgasLFguXnw0VzTwxQjU7jAj5IyqlmVgm7Aeuaenay2ClchG-HH0UOmTCI1HPiIA2BX3OCl2QlCZ-Y8dg3YfxPvQuyPd-E0jLfquFOorLjputZRIXMvN-Rl0AKO4Gp7U27_rI563TY46Q6nw2tc81QWkl-hj8icW0LNK2AY5ZKnJZhxs4aaiL-WC0xx-OfwJAvZQPFkvEa7zzXGee7z9W7RaMgyrODRQhT3-whMARs7FU2zOtxDXBS5RRva3QjqNAJzbdutVJDMQQ4m2hvEXP5T6vW88mPHYVPMRfzcoczQhvW7Uv5RW6TDYzm2hV4xqyawTG_kzyoNVK572QFK3YYYB3chN5IbfA9nkGS9B0-xLEXB3krmEQg";
+app.use(rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { erro: "RATE_LIMIT_EXCEDIDO", mensagem: "Muitas requisições. Tente novamente em instantes." }
+}));
+
+// =============================================================
+// SEGURANÇA: middleware de autenticação interna por API key
+// =============================================================
+function autenticar(req, res, next) {
+  const key = req.headers["x-api-key"];
+  if (!INTERNAL_API_KEY) {
+    return res.status(500).json({
+      erro: "INTERNAL_API_KEY_NAO_CONFIGURADA",
+      mensagem: "A variável de ambiente INTERNAL_API_KEY não foi configurada no servidor."
+    });
+  }
+  if (key !== INTERNAL_API_KEY) {
+    return res.status(401).json({
+      erro: "NAO_AUTORIZADO",
+      mensagem: "Chave de API ausente ou inválida. Envie o header x-api-key."
+    });
+  }
+  next();
+}
+
+// =============================================================
+// CACHE EM MEMÓRIA (chave = número CNJ)
+// Evita custo repetido de consulta ao CNJ/Escavador/JusBrasil
+// =============================================================
+const cache = new Map();
+
+function cacheGet(numero) {
+  const item = cache.get(numero);
+  if (!item) return null;
+  if (Date.now() - item.time > CACHE_TTL_MS) {
+    cache.delete(numero);
+    return null;
+  }
+  return item.data;
+}
+
+function cacheSet(numero, data) {
+  cache.set(numero, { time: Date.now(), data });
+}
+
+// =============================================================
+// LOG SIMPLES DE AUDITORIA (console — pronto para integrar com
+// um logger real como pino/winston quando precisar)
+// =============================================================
+function logConsulta({ numero, ip, fontes, ok, erro }) {
+  const entry = {
+    ts: new Date().toISOString(),
+    numero,
+    ip,
+    fontes,
+    ok,
+    erro: erro || null
+  };
+  console.log("[CONSULTA]", JSON.stringify(entry));
+}
 
 // =============================================================
 // DICIONÁRIO INTEGRAL DE TRIBUNAIS (Datajud CNJ)
@@ -147,9 +221,41 @@ const diasDesde = (iso) => {
   } catch { return null; }
 };
 
+// Validação real do dígito verificador CNJ (Resolução CNJ nº 65/2008 — módulo 97 base 10)
+// Formato: NNNNNNN-DD.AAAA.J.TR.OOOO  (NNNNNNN=sequencial, DD=dígito, AAAA=ano, J=segmento, TR=tribunal, OOOO=origem)
+// Algoritmo: DV = 98 - ((NNNNNNN + AAAA + J + TR + OOOO + "00") mod 97)
+// O sufixo "00" representa o lugar do próprio DV durante o cálculo.
 const validarCNJ = (n) => {
-  if (!n || n.length !== 20) return { valido: false, motivo: "Número precisa ter exatamente 20 dígitos." };
-  return { valido: true };
+  if (!n || n.length !== 20) {
+    return { valido: false, motivo: "Número precisa ter exatamente 20 dígitos." };
+  }
+  if (!/^\d{20}$/.test(n)) {
+    return { valido: false, motivo: "Número CNJ deve conter apenas dígitos." };
+  }
+  try {
+    const seq = n.slice(0, 7);          // NNNNNNN
+    const dv = n.slice(7, 9);           // DD
+    const ano = n.slice(9, 13);         // AAAA
+    const j = n.slice(13, 14);          // J
+    const tr = n.slice(14, 16);         // TR
+    const orig = n.slice(16, 20);       // OOOO
+
+    // Concatena sem o DV e com sufixo "00" (placeholder do DV) e calcula resto mod 97
+    // via aritmética dígito a dígito (o número é maior que 2^53).
+    const concat = seq + ano + j + tr + orig + "00";
+    let resto = 0;
+    for (let i = 0; i < concat.length; i++) {
+      resto = (resto * 10 + Number(concat[i])) % 97;
+    }
+    const dvCalc = 98 - resto;
+    const dvCalcStr = String(dvCalc).padStart(2, "0");
+    if (dvCalcStr !== dv) {
+      return { valido: false, motivo: `Dígito verificador inválido (esperado ${dvCalcStr}, recebido ${dv}).` };
+    }
+    return { valido: true };
+  } catch (e) {
+    return { valido: false, motivo: `Erro ao validar dígito CNJ: ${e.message}` };
+  }
 };
 
 // =============================================================
@@ -477,10 +583,12 @@ function classificarMovimento({ nome = "", codigo = null, conteudo = "", complem
 // =============================================================
 async function buscarCNJ(trib, num) {
   try {
-    const apiKey = process.env.DATAJUD_API_KEY || "cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==";
+    if (!DATAJUD_API_KEY) {
+      return { ok: false, erro: "API CNJ Datajud não configurada (DATAJUD_API_KEY ausente no .env)" };
+    }
     const res = await fetch(`https://api-publica.datajud.cnj.jus.br/${trib.endpoint}/_search`, {
       method: "POST",
-      headers: { "Authorization": `APIKey ${apiKey}`, "Content-Type": "application/json" },
+      headers: { "Authorization": `APIKey ${DATAJUD_API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ size: 1, query: { match: { numeroProcesso: num } } })
     });
 
@@ -530,11 +638,10 @@ async function buscarCNJ(trib, num) {
 // =============================================================
 async function buscarEscCapa(numFmt) {
   try {
-    const key = process.env.ESCAVADOR_API_KEY || TOKEN_ESCAVADOR_VIP;
-    if (!key) return { ok: false, erro: "API Escavador não configurada (ESCAVADOR_API_KEY ausente)" };
+    if (!ESCAVADOR_API_KEY) return { ok: false, erro: "API Escavador não configurada (ESCAVADOR_API_KEY ausente no .env)" };
 
     const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}`, {
-      headers: { "Authorization": `Bearer ${key}`, "X-Requested-With": "XMLHttpRequest" }
+      headers: { "Authorization": `Bearer ${ESCAVADOR_API_KEY}`, "X-Requested-With": "XMLHttpRequest" }
     });
 
     if (!res.ok) return { ok: false, erro: `Escavador (capa) retornou status ${res.status}` };
@@ -564,11 +671,10 @@ async function buscarEscCapa(numFmt) {
 // =============================================================
 async function buscarEscMovs(numFmt, limite = 30) {
   try {
-    const key = process.env.ESCAVADOR_API_KEY || TOKEN_ESCAVADOR_VIP;
-    if (!key) return { ok: false, erro: "API Escavador não configurada" };
+    if (!ESCAVADOR_API_KEY) return { ok: false, erro: "API Escavador não configurada (ESCAVADOR_API_KEY ausente no .env)" };
 
     const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}/movimentacoes`, {
-      headers: { "Authorization": `Bearer ${key}`, "X-Requested-With": "XMLHttpRequest" }
+      headers: { "Authorization": `Bearer ${ESCAVADOR_API_KEY}`, "X-Requested-With": "XMLHttpRequest" }
     });
 
     if (!res.ok) return { ok: false, erro: `Escavador (movs) retornou status ${res.status}` };
@@ -598,12 +704,11 @@ async function buscarEscMovs(numFmt, limite = 30) {
 // =============================================================
 async function buscarJusBrasil(numFmt) {
   try {
-    const token = process.env.JUSBRASIL_API_TOKEN;
-    if (!token) return { ok: false, erro: "API JusBrasil não configurada (JUSBRASIL_API_TOKEN ausente)" };
+    if (!JUSBRASIL_API_TOKEN) return { ok: false, erro: "API JusBrasil não configurada (JUSBRASIL_API_TOKEN ausente no .env)" };
 
     // Endpoint comercial - estrutura padrão da API Jusbrasil Soluções
     const res = await fetch(`https://api.jusbrasil.com.br/v2/processos/numero_cnj/${numFmt}`, {
-      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" }
+      headers: { "Authorization": `Bearer ${JUSBRASIL_API_TOKEN}`, "Content-Type": "application/json" }
     });
 
     if (!res.ok) return { ok: false, erro: `JusBrasil retornou status ${res.status}` };
@@ -1142,12 +1247,14 @@ function montarResumoExecutivo(historico, partes, classe, faseReal) {
 // =============================================================
 // ENDPOINT PRINCIPAL
 // =============================================================
-app.get("/consultar-processo", async (req, res) => {
+app.get("/consultar-processo", autenticar, async (req, res) => {
   const num = limparNum(req.query.numero_processo);
+  const ipOrigem = req.ip || req.headers["x-forwarded-for"] || "desconhecido";
 
   // Validação
   const validacao = validarCNJ(num);
   if (!validacao.valido) {
+    logConsulta({ numero: num, ip: ipOrigem, fontes: [], ok: false, erro: "NUMERO_INVALIDO" });
     return res.json({
       encontrado: false,
       erro: "NUMERO_INVALIDO",
@@ -1161,12 +1268,20 @@ app.get("/consultar-processo", async (req, res) => {
   const trib = TRIBUNAIS[codTrib];
 
   if (!trib) {
+    logConsulta({ numero: numFmt, ip: ipOrigem, fontes: [], ok: false, erro: "TRIBUNAL_NAO_IDENTIFICADO" });
     return res.json({
       encontrado: false,
       erro: "TRIBUNAL_NAO_IDENTIFICADO",
       mensagem: `Código de tribunal "${codTrib}" não reconhecido.`,
       orientacao_para_atendente: "Confirme o número do processo com o cliente — pode haver dígito digitado errado."
     });
+  }
+
+  // Cache: se já temos resposta recente para este processo, retorna direto
+  const cached = cacheGet(num);
+  if (cached) {
+    logConsulta({ numero: numFmt, ip: ipOrigem, fontes: cached.fontes_consultadas || [], ok: true, erro: "CACHE_HIT" });
+    return res.json({ ...cached, _cache: true });
   }
 
   // Busca paralela em todas as fontes
@@ -1184,6 +1299,7 @@ app.get("/consultar-processo", async (req, res) => {
   if (resJB.ok) fontesAtivas.push("JusBrasil");
 
   if (!fontesAtivas.length) {
+    logConsulta({ numero: numFmt, ip: ipOrigem, fontes: [], ok: false, erro: "PROCESSO_NAO_LOCALIZADO" });
     return res.json({
       encontrado: false,
       erro: "PROCESSO_NAO_LOCALIZADO",
@@ -1261,7 +1377,7 @@ app.get("/consultar-processo", async (req, res) => {
     .slice(0, 10);
 
   // Resposta consolidada
-  res.json({
+  const resposta = {
     encontrado: true,
     numero_processo: numFmt,
     tribunal: trib.nome,
@@ -1342,23 +1458,93 @@ app.get("/consultar-processo", async (req, res) => {
       proibido: "NÃO diga 'em movimentações iniciais', 'em análise interna', 'aguardando próximo andamento' a menos que fase_processual_real seja exatamente esse valor.",
       se_dado_faltar: "Se um campo for nulo ou 'Não disponibilizado', informe honestamente — não invente."
     },
-    
+
     // GATILHO DA INTELIGÊNCIA ARTIFICIAL (O Segredo do Padrão ADVBOX)
     instrucoes_ocultas_modo_justine: {
       ordem_direta: "AVALIE OS MOVIMENTOS. Se no 'historico_ultimas_30' houver movimentações recentes com urgencia 'ALTA' ou 'MÉDIA' (Ex: Sentença, Intimação, Despacho, Liminar) E essas movimentações tiverem um texto longo no campo 'texto_descritivo', AJA COMO O ANALISTA JUSTIN-E DA ADVBOX. Você deve ler atenciosamente o texto desse juiz e entregar mastigado para a funcionária: 1. Qual foi a ordem/decisão; 2. Se há prazo para cumprir (ex: 5 dias); 3. Qual a recomendação exata (O que fazer) para não perder o prazo."
     }
-  });
+  };
+
+  // Salva no cache e registra log de auditoria
+  cacheSet(num, resposta);
+  logConsulta({ numero: numFmt, ip: ipOrigem, fontes: fontesAtivas, ok: true });
+
+  res.json(resposta);
 });
 
-// Health
+// =============================================================
+// POLÍTICA DE PRIVACIDADE — exigido pelo GPT Actions público
+// URL final: https://<seu-dominio>/privacy
+// =============================================================
+app.get("/privacy", (req, res) => {
+  res.set("Content-Type", "text/html; charset=utf-8");
+  res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Política de Privacidade</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #222; }
+    h1 { color: #1B3A5C; border-bottom: 2px solid #2C5F8A; padding-bottom: 8px; }
+    h2 { color: #2C5F8A; margin-top: 28px; }
+    p { margin: 12px 0; }
+    .meta { color: #666; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <h1>Política de Privacidade</h1>
+  <p class="meta">Última atualização: ${new Date().toLocaleDateString("pt-BR")}</p>
+
+  <h2>1. Sobre a aplicação</h2>
+  <p>Esta API realiza consultas processuais em bases públicas, especialmente CNJ/Datajud e Escavador, e fornece informações estruturadas sobre processos judiciais para fins de apoio jurídico-administrativo.</p>
+
+  <h2>2. Dados tratados</h2>
+  <p>A aplicação processa exclusivamente o número CNJ do processo informado pelo usuário e os dados públicos retornados pelas fontes oficiais consultadas. Não coletamos dados pessoais sensíveis fora do que já é divulgado publicamente pelos tribunais.</p>
+
+  <h2>3. Registro de consultas</h2>
+  <p>As consultas realizadas podem ser registradas (data, número de processo consultado, IP de origem) para fins de auditoria, prevenção de abuso e melhoria do serviço. Esses registros não são compartilhados com terceiros.</p>
+
+  <h2>4. Compartilhamento</h2>
+  <p>Os dados retornados são originários de fontes públicas (CNJ Datajud, Escavador) e seguem as condições de uso dessas plataformas. Nenhum dado é vendido ou cedido para terceiros.</p>
+
+  <h2>5. Segurança</h2>
+  <p>O acesso à API é protegido por chave interna (header <code>x-api-key</code>), limite de requisições por IP e cache temporário em memória. Os tokens de integração são armazenados como variáveis de ambiente, fora do código-fonte.</p>
+
+  <h2>6. LGPD</h2>
+  <p>Eventuais titulares de dados que constem em processos consultados podem exercer seus direitos previstos na Lei Geral de Proteção de Dados (Lei nº 13.709/2018) diretamente perante o tribunal de origem, fonte oficial dos dados.</p>
+
+  <h2>7. Contato</h2>
+  <p>Em caso de dúvidas sobre esta política, entre em contato pelo e-mail informado pelo responsável da aplicação.</p>
+</body>
+</html>`);
+});
+
+// =============================================================
+// HEALTH CHECK — mostra status de configuração de segurança
+// =============================================================
 app.get("/health", (req, res) => res.json({
   status: "online",
   timestamp: new Date().toISOString(),
+  seguranca: {
+    autenticacao_interna_configurada: !!INTERNAL_API_KEY,
+    rate_limit_ativo: true,
+    rate_limit_max_por_janela: RATE_LIMIT_MAX,
+    rate_limit_janela_ms: RATE_LIMIT_WINDOW_MS,
+    cache_ativo: true,
+    cache_ttl_ms: CACHE_TTL_MS,
+    cache_entradas_atuais: cache.size
+  },
   apis_configuradas: {
-    cnj_datajud: true,
-    escavador: !!(process.env.ESCAVADOR_API_KEY || TOKEN_ESCAVADOR_VIP),
-    jusbrasil: !!process.env.JUSBRASIL_API_TOKEN
+    cnj_datajud: !!DATAJUD_API_KEY,
+    escavador: !!ESCAVADOR_API_KEY,
+    jusbrasil: !!JUSBRASIL_API_TOKEN
   }
 }));
 
-app.listen(PORT, "0.0.0.0", () => console.log(`Servidor online na porta ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Servidor online na porta ${PORT}`);
+  if (!INTERNAL_API_KEY) console.warn("[ATENÇÃO] INTERNAL_API_KEY não configurada — endpoint /consultar-processo retornará 500.");
+  if (!DATAJUD_API_KEY) console.warn("[ATENÇÃO] DATAJUD_API_KEY não configurada — consulta CNJ desativada.");
+  if (!ESCAVADOR_API_KEY) console.warn("[ATENÇÃO] ESCAVADOR_API_KEY não configurada — consulta Escavador desativada.");
+});
