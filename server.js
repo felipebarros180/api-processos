@@ -355,11 +355,20 @@ function classificarMovimento({ nome = "", codigo = null, conteudo = "", complem
   }
 
   if (/conclus[ãa]o|conclusos/i.test(txt)) {
+    // Distingue conclusão genérica de conclusão para sentença
+    if (/conclus[ãa]o.*para.*senten|conclus[ãa]o.*para.*julgamento|conclusos.*para.*senten|conclus[ãa]o.*senten/i.test(txt)) {
+      return {
+        categoria: "CONCLUSO PARA SENTENÇA",
+        autor_do_ato: "Cartório (envio ao juiz para sentenciar)",
+        descricao_assertiva: "Autos enviados ao juiz especificamente para sentenciar (decisão final)",
+        urgencia: "ALTA"
+      };
+    }
     return {
       categoria: "CONCLUSÃO",
       autor_do_ato: "Cartório (envio ao juiz)",
-      descricao_assertiva: "Autos enviados ao juiz para análise",
-      urgencia: "BAIXA"
+      descricao_assertiva: "Autos enviados ao juiz para análise/decisão",
+      urgencia: "MÉDIA"
     };
   }
 
@@ -477,9 +486,10 @@ async function buscarCNJ(trib, num) {
     const p = d?.hits?.hits?.[0]?._source;
     if (!p) return { ok: false, erro: "Processo não encontrado na base do CNJ" };
 
-    // Movimentos ordenados do mais recente para o mais antigo — pega 10
+    // Movimentos ordenados do mais recente para o mais antigo — pega 30
+    // (era 10, mas CONCLUSÃO/SENTENÇA podem estar em posições mais antigas)
     const movsOrdenados = [...(p.movimentos || [])].sort((a, b) => new Date(b.dataHora) - new Date(a.dataHora));
-    const movsLimitados = movsOrdenados.slice(0, 10);
+    const movsLimitados = movsOrdenados.slice(0, 30);
 
     const movimentos = movsLimitados.map(m => ({
       data: fmtDataBR(m.dataHora),
@@ -680,25 +690,479 @@ function fundirMovimentos({ movsCNJ = [], movsEsc = [], andJB = [] }) {
 }
 
 // =============================================================
+// GLOSSÁRIO DE MOVIMENTAÇÕES — explicação leiga + impacto + próximo passo
+// Usado pelo GPT para descrever o estado em linguagem que o atendente
+// repassa ao cliente. Cobre TODAS as categorias do classificador.
+// =============================================================
+const GLOSSARIO_MOVIMENTACOES = {
+  "SENTENÇA": {
+    explicacao_leiga: "O juiz analisou o caso e decidiu (sentença).",
+    impacto_pratico: "Ato decisório principal de 1ª instância. Após a sentença, abre prazo (geralmente 15 dias) para apelação.",
+    proximo_passo_tipico: "Conferir o conteúdo da sentença e avaliar recurso ou cumprimento.",
+    nivel: "ALTA"
+  },
+  "ACÓRDÃO": {
+    explicacao_leiga: "O grupo de desembargadores do tribunal (instância superior) julgou o recurso.",
+    impacto_pratico: "Ato decisório de 2ª instância. Pode ainda caber recurso especial (STJ) ou extraordinário (STF).",
+    proximo_passo_tipico: "Avaliar cabimento de novo recurso ou aguardar trânsito em julgado.",
+    nivel: "ALTA"
+  },
+  "DECISÃO LIMINAR / TUTELA": {
+    explicacao_leiga: "O juiz analisou um pedido urgente (liminar/tutela de urgência).",
+    impacto_pratico: "Ato urgente — produz efeitos imediatos se deferido.",
+    proximo_passo_tipico: "Cumprir a decisão (se deferida) ou avaliar agravo de instrumento (se indeferida).",
+    nivel: "ALTA"
+  },
+  "DECISÃO INTERLOCUTÓRIA": {
+    explicacao_leiga: "O juiz tomou uma decisão sobre algum ponto específico do processo, sem julgar o caso todo.",
+    impacto_pratico: "Pode ser atacada por agravo de instrumento em casos previstos no art. 1.015 do CPC.",
+    proximo_passo_tipico: "Analisar a decisão e avaliar recurso ou cumprimento.",
+    nivel: "MÉDIA"
+  },
+  "DESPACHO": {
+    explicacao_leiga: "O juiz deu uma orientação no processo, sem decidir o mérito.",
+    impacto_pratico: "Ato de mero expediente — geralmente não cabe recurso. Apenas conduz o processo.",
+    proximo_passo_tipico: "Cumprir o que o juiz determinou no despacho.",
+    nivel: "BAIXA"
+  },
+  "CONCLUSÃO": {
+    explicacao_leiga: "O processo foi enviado ao juiz para análise/decisão.",
+    impacto_pratico: "Quando há conclusão, o processo está nas mãos do juiz aguardando ato (despacho, decisão ou sentença).",
+    proximo_passo_tipico: "Aguardar a manifestação do juiz. Se já passaram muitos dias, pode-se pedir reiteração.",
+    nivel: "MÉDIA"
+  },
+  "CONCLUSO PARA SENTENÇA": {
+    explicacao_leiga: "O processo foi enviado ao juiz especificamente para sentenciar (decisão final de 1ª instância).",
+    impacto_pratico: "Fase mais avançada — instrução encerrada e o juiz vai julgar o caso.",
+    proximo_passo_tipico: "Aguardar a publicação da sentença.",
+    nivel: "ALTA"
+  },
+  "CONTESTAÇÃO": {
+    explicacao_leiga: "O réu apresentou a defesa dele.",
+    impacto_pratico: "Inicia a fase de resposta — geralmente segue-se a réplica do autor.",
+    proximo_passo_tipico: "Autor é intimado para apresentar réplica em 15 dias.",
+    nivel: "MÉDIA"
+  },
+  "RÉPLICA": {
+    explicacao_leiga: "O autor respondeu à defesa do réu.",
+    impacto_pratico: "Encerra a fase postulatória; processo segue para saneamento ou julgamento.",
+    proximo_passo_tipico: "Juiz analisa se há provas a produzir ou já julga antecipadamente.",
+    nivel: "MÉDIA"
+  },
+  "PETIÇÃO INICIAL": {
+    explicacao_leiga: "Apresentação da petição que inicia o processo.",
+    impacto_pratico: "Início formal do processo. Após distribuição, o juiz analisa e determina citação.",
+    proximo_passo_tipico: "Aguardar despacho inicial e citação do réu.",
+    nivel: "BAIXA"
+  },
+  "PETIÇÃO": {
+    explicacao_leiga: "Foi juntada uma petição ao processo (não dá para saber qual lado sem ler o conteúdo).",
+    impacto_pratico: "Pode ser de qualquer parte — exige leitura do documento para entender.",
+    proximo_passo_tipico: "Conferir o conteúdo da petição e ver se exige alguma resposta.",
+    nivel: "BAIXA"
+  },
+  "MANIFESTAÇÃO": {
+    explicacao_leiga: "Uma das partes se manifestou nos autos.",
+    impacto_pratico: "Cumprimento de intimação anterior. Conteúdo precisa ser conferido.",
+    proximo_passo_tipico: "Ler o teor da manifestação. Pode haver intimação da parte contrária para se manifestar.",
+    nivel: "BAIXA"
+  },
+  "EMBARGOS DE DECLARAÇÃO": {
+    explicacao_leiga: "Foram opostos embargos de declaração contra uma decisão (pedido de esclarecimento ou correção).",
+    impacto_pratico: "Suspende prazo de outros recursos. Tribunal/juiz precisa decidir os embargos antes.",
+    proximo_passo_tipico: "Aguardar decisão dos embargos. Se rejeitados, recomeça o prazo de apelação/recurso.",
+    nivel: "MÉDIA"
+  },
+  "APELAÇÃO": {
+    explicacao_leiga: "Foi interposto recurso de apelação contra a sentença.",
+    impacto_pratico: "Processo sobe para 2ª instância (tribunal). Efeito suspensivo na maioria dos casos.",
+    proximo_passo_tipico: "Aguardar contrarrazões da outra parte e remessa ao tribunal.",
+    nivel: "ALTA"
+  },
+  "AGRAVO DE INSTRUMENTO": {
+    explicacao_leiga: "Foi interposto agravo contra uma decisão interlocutória.",
+    impacto_pratico: "Recurso direto ao tribunal contra decisão que não é sentença. Não suspende o processo principal.",
+    proximo_passo_tipico: "Aguardar julgamento do agravo no tribunal.",
+    nivel: "ALTA"
+  },
+  "RECURSO ESPECIAL": {
+    explicacao_leiga: "Recurso para o STJ (Superior Tribunal de Justiça).",
+    impacto_pratico: "Discute interpretação de lei federal. Passa por juízo de admissibilidade.",
+    proximo_passo_tipico: "Aguardar admissão e remessa ao STJ.",
+    nivel: "ALTA"
+  },
+  "RECURSO EXTRAORDINÁRIO": {
+    explicacao_leiga: "Recurso para o STF (Supremo Tribunal Federal).",
+    impacto_pratico: "Discute matéria constitucional. Exige repercussão geral.",
+    proximo_passo_tipico: "Aguardar admissão e remessa ao STF.",
+    nivel: "ALTA"
+  },
+  "PARECER MP": {
+    explicacao_leiga: "O Ministério Público se manifestou ou deu parecer no processo.",
+    impacto_pratico: "Em causas com interesse público (ECA, idoso, falência etc.), o MP atua como fiscal da lei.",
+    proximo_passo_tipico: "Ler o parecer e ver se há intimação para manifestação das partes.",
+    nivel: "MÉDIA"
+  },
+  "DISTRIBUIÇÃO": {
+    explicacao_leiga: "O processo foi cadastrado e enviado ao juízo competente.",
+    impacto_pratico: "Ato de cartório que define qual vara/juiz vai conduzir o processo.",
+    proximo_passo_tipico: "Aguardar despacho inicial do juiz.",
+    nivel: "BAIXA"
+  },
+  "INTIMAÇÃO": {
+    explicacao_leiga: "Uma das partes foi avisada oficialmente de algum ato e geralmente tem prazo para responder.",
+    impacto_pratico: "Início do prazo processual para a parte intimada.",
+    proximo_passo_tipico: "Verificar prazo e conteúdo da intimação para cumprir/responder.",
+    nivel: "MÉDIA"
+  },
+  "CITAÇÃO": {
+    explicacao_leiga: "O réu foi oficialmente avisado da existência do processo e tem prazo para apresentar defesa.",
+    impacto_pratico: "Marco processual importante — inicia o prazo de contestação (geralmente 15 dias).",
+    proximo_passo_tipico: "Aguardar contestação do réu ou decretação de revelia.",
+    nivel: "ALTA"
+  },
+  "MANDADO EXPEDIDO": {
+    explicacao_leiga: "Cartório expediu um mandado para cumprimento por oficial de justiça.",
+    impacto_pratico: "Pode ser mandado de citação, intimação, penhora, busca e apreensão etc.",
+    proximo_passo_tipico: "Aguardar o cumprimento e juntada do mandado pelo oficial.",
+    nivel: "MÉDIA"
+  },
+  "AUDIÊNCIA DESIGNADA": {
+    explicacao_leiga: "Foi marcada uma audiência (data e hora).",
+    impacto_pratico: "Comparecimento obrigatório das partes (em regra). Anotar imediatamente na agenda.",
+    proximo_passo_tipico: "Preparar para a audiência (provas, testemunhas, defesa).",
+    nivel: "ALTA"
+  },
+  "AUDIÊNCIA REALIZADA": {
+    explicacao_leiga: "A audiência foi realizada — verificar a ata.",
+    impacto_pratico: "A ata define o que foi acordado, decidido ou determinado em audiência.",
+    proximo_passo_tipico: "Ler a ata e cumprir o que foi determinado.",
+    nivel: "MÉDIA"
+  },
+  "PERÍCIA": {
+    explicacao_leiga: "Atos relacionados à perícia técnica (laudo, esclarecimentos).",
+    impacto_pratico: "O laudo pericial é prova fundamental e pode definir o resultado do processo.",
+    proximo_passo_tipico: "Analisar o laudo e ver se exige impugnação.",
+    nivel: "MÉDIA"
+  },
+  "BLOQUEIO/PENHORA ONLINE": {
+    explicacao_leiga: "Foi feita uma ordem para bloquear/penhorar valores em conta bancária (SISBAJUD/BACENJUD).",
+    impacto_pratico: "Constrição patrimonial imediata. Pode haver impugnação em 5 dias.",
+    proximo_passo_tipico: "Avaliar impugnação ou aguardar transferência dos valores.",
+    nivel: "ALTA"
+  },
+  "PENHORA": {
+    explicacao_leiga: "Foi feita penhora de bens (imóveis, veículos, faturamento etc.).",
+    impacto_pratico: "Restrição sobre o bem penhorado. Pode levar a leilão.",
+    proximo_passo_tipico: "Avaliar impugnação à penhora ou aguardar avaliação/leilão.",
+    nivel: "ALTA"
+  },
+  "LEILÃO/HASTA": {
+    explicacao_leiga: "O processo está na fase de leilão de bens penhorados.",
+    impacto_pratico: "Bens serão vendidos para pagamento do crédito.",
+    proximo_passo_tipico: "Acompanhar resultado do leilão e destinação dos valores.",
+    nivel: "ALTA"
+  },
+  "ARQUIVAMENTO": {
+    explicacao_leiga: "O processo foi arquivado (provisória ou definitivamente).",
+    impacto_pratico: "Arquivamento provisório pode ser desarquivado. Definitivo encerra o processo.",
+    proximo_passo_tipico: "Verificar se é provisório (pode pedir desarquivamento) ou definitivo (encerrado).",
+    nivel: "MÉDIA"
+  },
+  "TRÂNSITO EM JULGADO / BAIXA": {
+    explicacao_leiga: "Não cabe mais recurso — a decisão é definitiva e o processo foi baixado.",
+    impacto_pratico: "Encerra a fase de conhecimento. Pode iniciar cumprimento de sentença.",
+    proximo_passo_tipico: "Iniciar cumprimento de sentença ou execução, se houver crédito a receber.",
+    nivel: "ALTA"
+  },
+  "CONVERSÃO ELETRÔNICA": {
+    explicacao_leiga: "Os autos físicos foram convertidos em eletrônicos (digitalização).",
+    impacto_pratico: "Ato administrativo do cartório, sem efeito processual relevante.",
+    proximo_passo_tipico: "Nenhum — apenas continuar acompanhando os atos seguintes.",
+    nivel: "BAIXA"
+  }
+};
+
+// =============================================================
+// PRIORIDADE DAS CATEGORIAS — usada para detectar fase real do processo
+// Quanto maior, mais relevante para definir o "estado processual"
+// =============================================================
+const PRIORIDADE_CATEGORIA = {
+  "TRÂNSITO EM JULGADO / BAIXA": 10,
+  "ACÓRDÃO": 9,
+  "SENTENÇA": 9,
+  "CONCLUSO PARA SENTENÇA": 8,
+  "DECISÃO LIMINAR / TUTELA": 8,
+  "AUDIÊNCIA DESIGNADA": 7,
+  "BLOQUEIO/PENHORA ONLINE": 7,
+  "PENHORA": 7,
+  "LEILÃO/HASTA": 7,
+  "CITAÇÃO": 6,
+  "APELAÇÃO": 6,
+  "AGRAVO DE INSTRUMENTO": 6,
+  "RECURSO ESPECIAL": 6,
+  "RECURSO EXTRAORDINÁRIO": 6,
+  "EMBARGOS DE DECLARAÇÃO": 5,
+  "DECISÃO INTERLOCUTÓRIA": 5,
+  "AUDIÊNCIA REALIZADA": 5,
+  "CONCLUSÃO": 5,
+  "CONTESTAÇÃO": 4,
+  "RÉPLICA": 4,
+  "PARECER MP": 4,
+  "ARQUIVAMENTO": 4,
+  "INTIMAÇÃO": 3,
+  "MANDADO EXPEDIDO": 3,
+  "PERÍCIA": 3,
+  "DESPACHO": 2,
+  "PETIÇÃO": 1,
+  "MANIFESTAÇÃO": 1,
+  "PETIÇÃO INICIAL": 1,
+  "DISTRIBUIÇÃO": 1,
+  "CONVERSÃO ELETRÔNICA": 0
+};
+
+const getPrioridade = (categoria) => PRIORIDADE_CATEGORIA[categoria] ?? 0;
+
+// =============================================================
+// IDENTIFICA A FASE REAL DO PROCESSO (STATE ENGINE)
+// Não basta pegar a última movimentação — precisa entender O ESTADO
+// Ex: se há um CONCLUSO há 30 dias e depois disso só veio uma INTIMAÇÃO
+// administrativa, o processo está EFETIVAMENTE concluso aguardando juiz.
+// =============================================================
+function identificarFaseReal(historico) {
+  if (!historico || !historico.length) {
+    return {
+      fase: "SEM DADOS",
+      explicacao: "Não há movimentações disponíveis para análise.",
+      base: null,
+      categoria_dominante: null,
+      data_referencia: null,
+      dias_nesta_fase: null
+    };
+  }
+
+  // 1. TRÂNSITO EM JULGADO — encerra tudo
+  const transito = historico.find(m => m.categoria === "TRÂNSITO EM JULGADO / BAIXA");
+  if (transito) {
+    return {
+      fase: "TRANSITADO EM JULGADO",
+      explicacao: "Processo já transitou em julgado — não cabe mais recurso. Decisão final definitiva.",
+      base: transito,
+      categoria_dominante: "TRÂNSITO EM JULGADO / BAIXA",
+      data_referencia: transito.data,
+      dias_nesta_fase: transito.dias_atras
+    };
+  }
+
+  // 2. ACÓRDÃO — decidido em 2ª instância
+  const acordao = historico.find(m => m.categoria === "ACÓRDÃO");
+  if (acordao && acordao.dias_atras !== null && acordao.dias_atras < 90) {
+    return {
+      fase: "ACÓRDÃO PROFERIDO (RECENTE)",
+      explicacao: "Tribunal de 2ª instância já julgou o recurso. Aguardando trânsito em julgado ou novo recurso.",
+      base: acordao,
+      categoria_dominante: "ACÓRDÃO",
+      data_referencia: acordao.data,
+      dias_nesta_fase: acordao.dias_atras
+    };
+  }
+
+  // 3. SENTENÇA — decidido em 1ª instância
+  const sentenca = historico.find(m => m.categoria === "SENTENÇA");
+  if (sentenca && sentenca.dias_atras !== null && sentenca.dias_atras < 365) {
+    // Verifica se já há recurso depois da sentença
+    const recursoApos = historico.find(m =>
+      ["APELAÇÃO", "AGRAVO DE INSTRUMENTO", "RECURSO ESPECIAL", "RECURSO EXTRAORDINÁRIO", "EMBARGOS DE DECLARAÇÃO"].includes(m.categoria)
+      && m.data_iso && sentenca.data_iso
+      && new Date(m.data_iso) > new Date(sentenca.data_iso)
+    );
+    if (recursoApos) {
+      return {
+        fase: "EM RECURSO",
+        explicacao: `Sentença foi proferida em ${sentenca.data} e está sendo discutida em recurso (${recursoApos.categoria}).`,
+        base: recursoApos,
+        categoria_dominante: recursoApos.categoria,
+        data_referencia: recursoApos.data,
+        dias_nesta_fase: recursoApos.dias_atras
+      };
+    }
+    return {
+      fase: "SENTENCIADO",
+      explicacao: "Processo já foi sentenciado em 1ª instância. Aguardando prazo de recurso ou cumprimento.",
+      base: sentenca,
+      categoria_dominante: "SENTENÇA",
+      data_referencia: sentenca.data,
+      dias_nesta_fase: sentenca.dias_atras
+    };
+  }
+
+  // 4. AUDIÊNCIA DESIGNADA — futura, agenda obrigatória
+  const audienciaFutura = historico.find(m => {
+    if (m.categoria !== "AUDIÊNCIA DESIGNADA") return false;
+    if (!m.texto_descritivo) return true;
+    // Tenta detectar data futura no texto
+    const matchData = m.texto_descritivo.match(/(\d{2}\/\d{2}\/\d{4})/);
+    if (!matchData) return true;
+    const [d, mo, y] = matchData[1].split("/").map(Number);
+    return new Date(y, mo - 1, d).getTime() > Date.now();
+  });
+  if (audienciaFutura) {
+    return {
+      fase: "AUDIÊNCIA DESIGNADA",
+      explicacao: "Há audiência marcada — verificar data e preparar (anotar na agenda obrigatoriamente).",
+      base: audienciaFutura,
+      categoria_dominante: "AUDIÊNCIA DESIGNADA",
+      data_referencia: audienciaFutura.data,
+      dias_nesta_fase: audienciaFutura.dias_atras
+    };
+  }
+
+  // 5. CONCLUSÃO — processo está com o juiz aguardando ato
+  const concluso = historico.find(m =>
+    m.categoria === "CONCLUSÃO" || m.categoria === "CONCLUSO PARA SENTENÇA"
+  );
+  if (concluso) {
+    // Verifica se DEPOIS do concluso veio algum ato decisório
+    const atoAposConcluso = historico.find(m =>
+      ["SENTENÇA", "DECISÃO INTERLOCUTÓRIA", "DECISÃO LIMINAR / TUTELA", "DESPACHO"].includes(m.categoria)
+      && m.data_iso && concluso.data_iso
+      && new Date(m.data_iso) > new Date(concluso.data_iso)
+    );
+    if (!atoAposConcluso) {
+      return {
+        fase: "CONCLUSO PARA DECISÃO",
+        explicacao: `Processo está com o juiz desde ${concluso.data} (${concluso.dias_atras} dias) aguardando decisão/despacho/sentença. Quanto maior o tempo, mais próximo de uma decisão.`,
+        base: concluso,
+        categoria_dominante: concluso.categoria,
+        data_referencia: concluso.data,
+        dias_nesta_fase: concluso.dias_atras
+      };
+    }
+  }
+
+  // 6. PENHORA / BLOQUEIO — fase de execução
+  const penhora = historico.find(m =>
+    ["BLOQUEIO/PENHORA ONLINE", "PENHORA", "LEILÃO/HASTA"].includes(m.categoria)
+  );
+  if (penhora && penhora.dias_atras !== null && penhora.dias_atras < 180) {
+    return {
+      fase: "EXECUÇÃO/CONSTRIÇÃO PATRIMONIAL",
+      explicacao: "Processo está em fase de execução com atos de constrição patrimonial (penhora/bloqueio).",
+      base: penhora,
+      categoria_dominante: penhora.categoria,
+      data_referencia: penhora.data,
+      dias_nesta_fase: penhora.dias_atras
+    };
+  }
+
+  // 7. CITAÇÃO recente — réu acabou de ser citado
+  const citacao = historico.find(m => m.categoria === "CITAÇÃO");
+  if (citacao && citacao.dias_atras !== null && citacao.dias_atras < 60) {
+    return {
+      fase: "AGUARDANDO CONTESTAÇÃO",
+      explicacao: "Réu foi citado e está dentro do prazo (em regra 15 dias úteis) para apresentar defesa.",
+      base: citacao,
+      categoria_dominante: "CITAÇÃO",
+      data_referencia: citacao.data,
+      dias_nesta_fase: citacao.dias_atras
+    };
+  }
+
+  // 8. CONTESTAÇÃO recente — aguardando réplica
+  const contestacao = historico.find(m => m.categoria === "CONTESTAÇÃO");
+  if (contestacao && contestacao.dias_atras !== null && contestacao.dias_atras < 90) {
+    const replicaApos = historico.find(m =>
+      m.categoria === "RÉPLICA" && m.data_iso && contestacao.data_iso
+      && new Date(m.data_iso) > new Date(contestacao.data_iso)
+    );
+    if (!replicaApos) {
+      return {
+        fase: "AGUARDANDO RÉPLICA",
+        explicacao: "Réu apresentou contestação. Autor deve apresentar réplica no prazo.",
+        base: contestacao,
+        categoria_dominante: "CONTESTAÇÃO",
+        data_referencia: contestacao.data,
+        dias_nesta_fase: contestacao.dias_atras
+      };
+    }
+  }
+
+  // 9. INTIMAÇÃO recente — alguma parte foi intimada
+  const intimacao = historico.find(m => m.categoria === "INTIMAÇÃO");
+  if (intimacao && intimacao.dias_atras !== null && intimacao.dias_atras < 60) {
+    return {
+      fase: "AGUARDANDO MANIFESTAÇÃO DE PARTE",
+      explicacao: "Uma das partes foi intimada e está dentro do prazo para se manifestar.",
+      base: intimacao,
+      categoria_dominante: "INTIMAÇÃO",
+      data_referencia: intimacao.data,
+      dias_nesta_fase: intimacao.dias_atras
+    };
+  }
+
+  // 10. ARQUIVAMENTO
+  const arquivamento = historico.find(m => m.categoria === "ARQUIVAMENTO");
+  if (arquivamento) {
+    return {
+      fase: "ARQUIVADO",
+      explicacao: "Processo está arquivado. Verificar se é provisório (cabe desarquivamento) ou definitivo.",
+      base: arquivamento,
+      categoria_dominante: "ARQUIVAMENTO",
+      data_referencia: arquivamento.data,
+      dias_nesta_fase: arquivamento.dias_atras
+    };
+  }
+
+  // 11. Fallback — usa o ato de maior prioridade no histórico
+  const maisRelevante = [...historico].sort((a, b) => getPrioridade(b.categoria) - getPrioridade(a.categoria))[0];
+
+  // Se o mais relevante for de baixíssima prioridade, é fase inicial mesmo
+  if (getPrioridade(maisRelevante.categoria) <= 1) {
+    return {
+      fase: "FASE INICIAL (TRAMITAÇÃO ADMINISTRATIVA)",
+      explicacao: "Processo em movimentações iniciais — distribuição, juntadas, atos de cartório. Ainda não houve ato relevante de juiz ou parte.",
+      base: historico[0],
+      categoria_dominante: historico[0].categoria,
+      data_referencia: historico[0].data,
+      dias_nesta_fase: historico[0].dias_atras
+    };
+  }
+
+  return {
+    fase: "EM TRAMITAÇÃO",
+    explicacao: `Processo em andamento. Ato mais relevante recente: ${maisRelevante.categoria} em ${maisRelevante.data}.`,
+    base: maisRelevante,
+    categoria_dominante: maisRelevante.categoria,
+    data_referencia: maisRelevante.data,
+    dias_nesta_fase: maisRelevante.dias_atras
+  };
+}
+
+// =============================================================
 // RESUMO EXECUTIVO PARA O GPT (anti-genericidade)
 // =============================================================
-function montarResumoExecutivo(historico, partes, classe) {
+function montarResumoExecutivo(historico, partes, classe, faseReal) {
   if (!historico || !historico.length) {
     return "Sem histórico de movimentações disponível.";
   }
-  const ult = historico[0];
   const altaUrg = historico.filter(h => h.urgencia === "ALTA");
 
   let resumo = `Processo de ${classe || "classe não informada"} entre ${partes.autor || "[autor]"} (autor) e ${partes.reu || "[réu]"} (réu). `;
-  resumo += `Última movimentação em ${ult.data} (${ult.dias_atras} dias atrás): ${ult.descricao_assertiva}. `;
-  resumo += `Categoria: ${ult.categoria}. Quem fez o ato: ${ult.autor_do_ato}. `;
 
-  if (altaUrg.length) {
-    resumo += `Atenção: ${altaUrg.length} movimentação(ões) de alta urgência nas últimas 10. `;
+  // PRIORIZA a fase real, não a última movimentação
+  if (faseReal && faseReal.fase) {
+    resumo += `ESTADO ATUAL: ${faseReal.fase}. ${faseReal.explicacao} `;
+    if (faseReal.data_referencia) {
+      resumo += `(Referência: ${faseReal.data_referencia}, há ${faseReal.dias_nesta_fase} dias). `;
+    }
   }
 
-  if (ult.texto_descritivo && ult.texto_descritivo !== ult.nome_tpu_cnj) {
-    resumo += `Texto integral do andamento: "${ult.texto_descritivo}".`;
+  if (altaUrg.length) {
+    resumo += `Há ${altaUrg.length} movimentação(ões) de alta urgência no histórico. `;
+  }
+
+  if (faseReal?.base?.texto_descritivo && faseReal.base.texto_descritivo !== faseReal.base.nome_tpu_cnj) {
+    resumo += `Texto integral do ato de referência: "${faseReal.base.texto_descritivo}".`;
   }
 
   return resumo.trim();
@@ -738,7 +1202,7 @@ app.get("/consultar-processo", async (req, res) => {
   const [resCNJ, resEscCapa, resEscMovs, resJB] = await Promise.all([
     buscarCNJ(trib, num),
     buscarEscCapa(numFmt),
-    buscarEscMovs(numFmt, 10),
+    buscarEscMovs(numFmt, 30),
     buscarJusBrasil(numFmt)
   ]);
 
@@ -810,6 +1274,22 @@ app.get("/consultar-processo", async (req, res) => {
   const partes = { autor, reu };
   const classe = resCNJ.classe || resJB.classe || "Não informada";
 
+  // === STATE ENGINE: identifica a fase real do processo ===
+  // (não confia apenas na última movimentação, que pode ser irrelevante)
+  const faseReal = identificarFaseReal(historicoFinal);
+
+  // Glossário só dos atos que aparecem neste processo (economiza tokens)
+  const categoriasNoProcesso = [...new Set(historicoFinal.map(h => h.categoria))];
+  const glossarioDoProcesso = {};
+  categoriasNoProcesso.forEach(cat => {
+    if (GLOSSARIO_MOVIMENTACOES[cat]) glossarioDoProcesso[cat] = GLOSSARIO_MOVIMENTACOES[cat];
+  });
+
+  // Movimentações relevantes (urgência ALTA ou MÉDIA) para o GPT focar
+  const movimentosRelevantes = historicoFinal
+    .filter(h => h.urgencia === "ALTA" || h.urgencia === "MÉDIA")
+    .slice(0, 10);
+
   // Resposta consolidada
   res.json({
     encontrado: true,
@@ -833,10 +1313,20 @@ app.get("/consultar-processo", async (req, res) => {
     status_predito_escavador: resEscCapa.ok ? resEscCapa.status_predito : null,
     fontes_arquivadas: resEscCapa.ok ? resEscCapa.fontes_arquivadas : null,
 
-    // Resumo executivo (string pronta pro GPT não inventar)
-    resumo_executivo: montarResumoExecutivo(historicoFinal, partes, classe),
+    // === ESTADO REAL DO PROCESSO (STATE ENGINE) ===
+    // Este é o campo PRINCIPAL para o GPT entender em que fase o processo está.
+    // Não usar apenas dados_da_movimentacao — esse pode ser ato administrativo irrelevante.
+    fase_processual_real: faseReal.fase,
+    explicacao_fase: faseReal.explicacao,
+    categoria_dominante: faseReal.categoria_dominante,
+    data_referencia_fase: faseReal.data_referencia,
+    dias_nesta_fase: faseReal.dias_nesta_fase,
+    movimentacao_base_da_fase: faseReal.base,
 
-    // Última movimentação destacada e DESCRITIVA
+    // Resumo executivo (string pronta pro GPT não inventar)
+    resumo_executivo: montarResumoExecutivo(historicoFinal, partes, classe, faseReal),
+
+    // Última movimentação cronológica (PODE SER IRRELEVANTE — usar com cuidado)
     dados_da_movimentacao: ultima ? {
       data_registro: ultima.data,
       data_iso: ultima.data_iso,
@@ -847,11 +1337,18 @@ app.get("/consultar-processo", async (req, res) => {
       descricao_assertiva: ultima.descricao_assertiva,
       texto_completo_do_andamento: ultima.texto_descritivo,
       quem_fez_o_movimento: ultima.autor_do_ato,
-      urgencia: ultima.urgencia
+      urgencia: ultima.urgencia,
+      atencao: "Esta é apenas a movimentação cronologicamente mais recente — pode ser ato administrativo. Use fase_processual_real para entender o estado do processo."
     } : null,
 
-    // Histórico das ÚLTIMAS 10 movimentações (com texto descritivo + classificação)
-    historico_ultimas_10: historicoFinal,
+    // Movimentações relevantes (filtradas por urgência ALTA/MÉDIA)
+    movimentos_relevantes: movimentosRelevantes,
+
+    // Histórico das ÚLTIMAS 30 movimentações (com texto descritivo + classificação)
+    historico_ultimas_30: historicoFinal,
+
+    // Glossário aplicável: explicação leiga + impacto + próximo passo
+    glossario_aplicavel: glossarioDoProcesso,
 
     // Sinais de qualidade dos dados (anti-alucinação)
     qualidade_dos_dados: {
@@ -862,14 +1359,17 @@ app.get("/consultar-processo", async (req, res) => {
       partes_completas: autor !== "Não disponibilizado pelo tribunal" && reu !== "Não disponibilizado pelo tribunal",
       historico_disponivel: historicoFinal.length > 0,
       total_movimentos_retornados: historicoFinal.length,
-      tem_texto_descritivo: historicoFinal.some(h => h.texto_descritivo && h.texto_descritivo !== h.nome_tpu_cnj)
+      tem_texto_descritivo: historicoFinal.some(h => h.texto_descritivo && h.texto_descritivo !== h.nome_tpu_cnj),
+      fase_detectada_com_confianca: faseReal.fase !== "EM TRAMITAÇÃO" && faseReal.fase !== "FASE INICIAL (TRAMITAÇÃO ADMINISTRATIVA)" && faseReal.fase !== "SEM DADOS"
     },
 
     // Instruções de uso para o LLM (anti-genericidade)
     instrucoes_para_gpt: {
-      use_apenas: "Responda usando exclusivamente os campos descricao_assertiva, texto_completo_do_andamento, categoria e quem_fez_o_movimento. Não invente conteúdo.",
-      ao_descrever_movimentacao: "Diga a CATEGORIA + a DESCRIÇÃO ASSERTIVA + QUEM fez o ato + QUANDO. Se houver texto_completo_do_andamento diferente do nome do código TPU, cite-o entre aspas.",
-      se_dado_faltar: "Se um campo vier nulo ou 'Não disponibilizado', informe ao usuário que o tribunal não publicou esse dado — não tente inferir."
+      regra_principal: "USE fase_processual_real e explicacao_fase como base da resposta. NÃO use apenas dados_da_movimentacao (que pode ser ato administrativo irrelevante).",
+      ao_descrever_processo: "Diga: ESTADO ATUAL = fase_processual_real, baseado em CATEGORIA_DOMINANTE de DATA_REFERENCIA. Use o glossario_aplicavel para explicar em linguagem leiga.",
+      ao_listar_movimentos: "Foque em movimentos_relevantes (já filtrados). Cite até 4 com data + descricao_assertiva.",
+      proibido: "NÃO diga 'em movimentações iniciais', 'em análise interna', 'aguardando próximo andamento' se a fase_processual_real for diferente de FASE INICIAL.",
+      se_dado_faltar: "Se um campo for nulo ou 'Não disponibilizado', informe honestamente — não invente."
     }
   });
 });
