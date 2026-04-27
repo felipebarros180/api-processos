@@ -9,6 +9,11 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 // =============================================================
+// TOKEN VIP DO ESCAVADOR (Injetado Diretamente)
+// =============================================================
+const TOKEN_ESCAVADOR_VIP = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxIiwianRpIjoiZDVmOTRkYWQ3ODI2NzU3YjEzMjEzOTllY2ZmZWNhMDM2MjA4MWM5OWYwNDNmNTk3MDYxNWYwOTQ4N2Q3NjZlYmQ0ZDE3ZDFjNTk1OGYyZDMiLCJpYXQiOjE3NzczMDE2MTEuMDE5NjE0LCJuYmYiOjE3NzczMDE2MTEuMDE5NjE1LCJleHAiOjIwOTI5MjA4MTEuMDE4MDU3LCJzdWIiOiIzNTEzNTEyIiwic2NvcGVzIjpbImFjZXNzYXJfYXBpX3BhZ2EiLCJhY2Vzc2FyX2FwaV9wbGF5Z3JvdW5kIl19.NIdCHkyEuX08oJHxuGqggotniiQfxwhSs1-H2tl-2N6rDGN1bQ55Ft30v6rXi10EMkFQfodU_DZ3lyZR4Eap0Z8PjNe4wPp58ZU5WBHLWM9rDnsXR430c_LxPkjU10dJLuCB2VC9gKNxh9Z8HcLldBmnTwbzA12_lmiVHAWju7ZbfdBfjjJVllaqBy8yllgpqVWcpBvpFtnTl8r17I1edem1w4ToovGfyEu6GSLlgTAuYanTTXCqxxd9PU2hLLU-qAYIF7W8sfcWbCKx2FM5PEEnyz0RVb8GbRH0GLcFAXFIwnFMFnS2iDgasLFguXnw0VzTwxQjU7jAj5IyqlmVgm7Aeuaenay2ClchG-HH0UOmTCI1HPiIA2BX3OCl2QlCZ-Y8dg3YfxPvQuyPd-E0jLfquFOorLjputZRIXMvN-Rl0AKO4Gp7U27_rI563TY46Q6nw2tc81QWkl-hj8icW0LNK2AY5ZKnJZhxs4aaiL-WC0xx-OfwJAvZQPFkvEa7zzXGee7z9W7RaMgyrODRQhT3-whMARs7FU2zOtxDXBS5RRva3QjqNAJzbdutVJDMQQ4m2hvEXP5T6vW88mPHYVPMRfzcoczQhvW7Uv5RW6TDYzm2hV4xqyawTG_kzyoNVK572QFK3YYYB3chN5IbfA9nkGS9B0-xLEXB3krmEQg";
+
+// =============================================================
 // DICIONÁRIO INTEGRAL DE TRIBUNAIS (Datajud CNJ)
 // =============================================================
 const TRIBUNAIS = {
@@ -525,7 +530,7 @@ async function buscarCNJ(trib, num) {
 // =============================================================
 async function buscarEscCapa(numFmt) {
   try {
-    const key = process.env.ESCAVADOR_API_KEY;
+    const key = process.env.ESCAVADOR_API_KEY || TOKEN_ESCAVADOR_VIP;
     if (!key) return { ok: false, erro: "API Escavador não configurada (ESCAVADOR_API_KEY ausente)" };
 
     const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}`, {
@@ -559,7 +564,7 @@ async function buscarEscCapa(numFmt) {
 // =============================================================
 async function buscarEscMovs(numFmt, limite = 30) {
   try {
-    const key = process.env.ESCAVADOR_API_KEY;
+    const key = process.env.ESCAVADOR_API_KEY || TOKEN_ESCAVADOR_VIP;
     if (!key) return { ok: false, erro: "API Escavador não configurada" };
 
     const res = await fetch(`https://api.escavador.com/api/v2/processos/numero_cnj/${numFmt}/movimentacoes`, {
@@ -1336,6 +1341,11 @@ app.get("/consultar-processo", async (req, res) => {
       ao_listar_movimentos: "Foque em movimentos_relevantes. Cite até 4 com data + descricao_assertiva.",
       proibido: "NÃO diga 'em movimentações iniciais', 'em análise interna', 'aguardando próximo andamento' a menos que fase_processual_real seja exatamente esse valor.",
       se_dado_faltar: "Se um campo for nulo ou 'Não disponibilizado', informe honestamente — não invente."
+    },
+    
+    // GATILHO DA INTELIGÊNCIA ARTIFICIAL (O Segredo do Padrão ADVBOX)
+    instrucoes_ocultas_modo_justine: {
+      ordem_direta: "AVALIE OS MOVIMENTOS. Se no 'historico_ultimas_30' houver movimentações recentes com urgencia 'ALTA' ou 'MÉDIA' (Ex: Sentença, Intimação, Despacho, Liminar) E essas movimentações tiverem um texto longo no campo 'texto_descritivo', AJA COMO O ANALISTA JUSTIN-E DA ADVBOX. Você deve ler atenciosamente o texto desse juiz e entregar mastigado para a funcionária: 1. Qual foi a ordem/decisão; 2. Se há prazo para cumprir (ex: 5 dias); 3. Qual a recomendação exata (O que fazer) para não perder o prazo."
     }
   });
 });
@@ -1346,7 +1356,7 @@ app.get("/health", (req, res) => res.json({
   timestamp: new Date().toISOString(),
   apis_configuradas: {
     cnj_datajud: true,
-    escavador: !!process.env.ESCAVADOR_API_KEY,
+    escavador: !!(process.env.ESCAVADOR_API_KEY || TOKEN_ESCAVADOR_VIP),
     jusbrasil: !!process.env.JUSBRASIL_API_TOKEN
   }
 }));
