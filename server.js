@@ -1642,42 +1642,8 @@ app.get("/health", (req, res) => res.json({
 }));
 
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`
-╔════════════════════════════════════════════════════════════════╗
-║  🚀 SERVIDOR ONLINE NA PORTA ${PORT.toString().padEnd(34)}║
-╚════════════════════════════════════════════════════════════════╝
-`);
-  
-  // Checagem de variáveis críticas
-  const alertas = [];
-  
-  if (!INTERNAL_API_KEY) {
-    alertas.push("⚠️  INTERNAL_API_KEY não configurada");
-    alertas.push("   → Endpoint /consultar-processo bloqueado");
-    alertas.push("   → Configure no Railway: Variables → INTERNAL_API_KEY");
-  }
-  
-  if (!DATAJUD_API_KEY) {
-    alertas.push("⚠️  DATAJUD_API_KEY não configurada");
-    alertas.push("   → Consulta CNJ Datajud desativada");
-  }
-  
-  if (!ESCAVADOR_API_KEY) {
-    alertas.push("⚠️  ESCAVADOR_API_KEY não configurada");
-    alertas.push("   → Consulta Escavador desativada");
-  }
-  
-  if (alertas.length > 0) {
-    console.log("\n╔════════════════════════════════════════════════════════════════╗");
-    console.log("║  ⚠️  ALERTAS DE CONFIGURAÇÃO                                  ║");
-    console.log("╚════════════════════════════════════════════════════════════════╝\n");
-    alertas.forEach(a => console.log(a));
-    console.log("\n");
-  } else {
-    console.log("✅ Todas as variáveis de ambiente configuradas corretamente\n");
-  }
-  
-  console.log(`📍 Health check: http://localhost:${PORT}/health`);
-  console.log(`📍 Privacy: http://localhost:${PORT}/privacy`);
-  console.log(`🔐 API protegida: header x-api-key obrigatório\n`);
+  console.log(`Servidor online na porta ${PORT}`);
+  if (!INTERNAL_API_KEY) console.warn("[ATENÇÃO] INTERNAL_API_KEY não configurada — endpoint /consultar-processo retornará 500.");
+  if (!DATAJUD_API_KEY) console.warn("[ATENÇÃO] DATAJUD_API_KEY não configurada — consulta CNJ desativada.");
+  if (!ESCAVADOR_API_KEY) console.warn("[ATENÇÃO] ESCAVADOR_API_KEY não configurada — consulta Escavador desativada.");
 });
